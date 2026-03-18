@@ -438,34 +438,22 @@ impl Renderer {
         let settings_x = pill_x + pill_w + 10;
         let settings_y = pill_y;
 
-        // Dimmer background than theme pill
-        let settings_bg = Color::rgba(
-            self.theme.title_bar_text.r,
-            self.theme.title_bar_text.g,
-            self.theme.title_bar_text.b,
-            30,
+        // Subtle but readable on all themes — use fg color with enough contrast
+        let settings_bg = Color::rgb(
+            self.theme.title_bar_bg.r.saturating_add(20),
+            self.theme.title_bar_bg.g.saturating_add(20),
+            self.theme.title_bar_bg.b.saturating_add(20),
         );
         Self::fill_rounded_rect(buf, stride, settings_x, settings_y, settings_w, settings_h, settings_h / 2, settings_bg);
 
-        // Border
-        let settings_border = Color::rgba(
-            self.theme.title_bar_text.r,
-            self.theme.title_bar_text.g,
-            self.theme.title_bar_text.b,
-            80,
-        );
+        // Border — use title bar text color for visibility
         Self::stroke_rounded_rect(
             buf, stride, settings_x, settings_y, settings_w, settings_h,
-            settings_h / 2, 1, settings_border,
+            settings_h / 2, 1, self.theme.title_bar_text,
         );
 
-        // Text
-        let settings_text_color = Color::rgba(
-            self.theme.title_bar_text.r,
-            self.theme.title_bar_text.g,
-            self.theme.title_bar_text.b,
-            180,
-        );
+        // Text — full opacity title bar text so it's always readable
+        let settings_text_color = self.theme.title_bar_text;
         self.render_string(
             buf, stride,
             settings_x + pill_pad_h, settings_y + pill_pad_v,
@@ -855,19 +843,17 @@ impl Renderer {
         let mut row_y = header_y + self.cell_height + 20;
         let row_spacing = self.cell_height + 16;
 
-        // Hover highlight color
-        let hover_bg = Color::rgba(
-            self.theme.cursor.r,
-            self.theme.cursor.g,
-            self.theme.cursor.b,
-            25,
+        // Hover/flash colors — fully opaque, blended manually against panel bg
+        // Using rgba here causes transparency artifacts on the already-darkened overlay
+        let hover_bg = Color::rgb(
+            panel_bg.r.saturating_add(self.theme.cursor.r / 10),
+            panel_bg.g.saturating_add(self.theme.cursor.g / 10),
+            panel_bg.b.saturating_add(self.theme.cursor.b / 10),
         );
-        // Click flash color (brighter)
-        let flash_bg = Color::rgba(
-            self.theme.cursor.r,
-            self.theme.cursor.g,
-            self.theme.cursor.b,
-            60,
+        let flash_bg = Color::rgb(
+            panel_bg.r.saturating_add(self.theme.cursor.r / 5),
+            panel_bg.g.saturating_add(self.theme.cursor.g / 5),
+            panel_bg.b.saturating_add(self.theme.cursor.b / 5),
         );
 
         let mut current_row: i32 = 0;
