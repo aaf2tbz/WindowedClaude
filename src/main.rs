@@ -20,7 +20,10 @@ fn main() -> Result<()> {
         installer::run_first_time_setup()?;
     }
 
-    // Phase 2: Launch the themed terminal with Claude
-    info!("Launching terminal");
-    ui::run(config)
+    // Phase 2: Check if we need to show the welcome/shortcut screen
+    let show_welcome = installer::needs_shortcut_prompt();
+
+    // Phase 3: Launch the themed terminal (with welcome screen if first run)
+    info!("Launching terminal (welcome={})", show_welcome);
+    ui::run(config, show_welcome)
 }

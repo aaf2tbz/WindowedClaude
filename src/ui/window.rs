@@ -27,8 +27,18 @@ const BTN_SIZE: f64 = 12.0;
 const BTN_SPACING: f64 = 28.0;
 const BTN_RIGHT_PAD: f64 = 20.0;
 
+/// App state machine
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum AppPhase {
+    /// Normal terminal operation
+    Terminal,
+    /// Showing the welcome/shortcut prompt (first run only)
+    WelcomeScreen,
+}
+
 struct App {
     config: Config,
+    phase: AppPhase,
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     renderer: Option<Renderer>,
@@ -46,9 +56,15 @@ struct App {
 }
 
 impl App {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, show_welcome: bool) -> Self {
+        let phase = if show_welcome {
+            AppPhase::WelcomeScreen
+        } else {
+            AppPhase::Terminal
+        };
         Self {
             config,
+            phase,
             window: None,
             surface: None,
             renderer: None,
@@ -95,6 +111,22 @@ impl App {
 
     fn current_theme(&self) -> &'static theme::Theme {
         theme::theme_by_id(&self.config.theme_id)
+    }
+
+    /// Transition from welcome screen to terminal mode
+    fn finish_welcome(&mut self, create_shortcut: bool) {
+        if create_shortcut {
+            info!("User opted to create desktop shortcut");
+            if let Err(e) = installer::shortcuts::create_desktop_shortcut() {
+                log::warn!("Desktop shortcut failed: {}", e);
+            }
+        } else {
+            info!("User declined desktop shortcut");
+        }
+        installer::mark_shortcut_prompted();
+        self.phase = AppPhase::Terminal;
+        self.spawn_pty();
+        self.request_redraw();
     }
 
     /// Rebuild the renderer (e.g., after font size change) and resize terminal to match
@@ -236,7 +268,10 @@ impl ApplicationHandler for App {
         self.terminal = Some(terminal);
         self.window = Some(window);
 
-        self.spawn_pty();
+        // Only spawn PTY immediately if skipping welcome screen
+        if self.phase == AppPhase::Terminal {
+            self.spawn_pty();
+        }
     }
 
     fn window_event(
@@ -405,6 +440,31 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
+                // --- Welcome screen input ---
+                if self.phase == AppPhase::WelcomeScreen {
+                    match &logical_key {
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("y") => {
+                            self.finish_welcome(true);
+                            return;
+                        }
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("n") => {
+                            self.finish_welcome(false);
+                            return;
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            // Enter defaults to Yes
+                            self.finish_welcome(true);
+                            return;
+                        }
+                        Key::Named(NamedKey::Escape) => {
+                            // Escape defaults to No
+                            self.finish_welcome(false);
+                            return;
+                        }
+                        _ => return, // Ignore other keys during welcome
+                    }
+                }
+
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
 
@@ -560,24 +620,43 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                // Drain PTY output into the terminal emulator
-                if let (Some(pty), Some(terminal)) = (&self.pty, &mut self.terminal) {
-                    while let Some(data) = pty.try_read() {
-                        terminal.process(&data);
+                match self.phase {
+                    AppPhase::WelcomeScreen => {
+                        // Render the welcome/shortcut prompt screen
+                        if let (Some(surface), Some(renderer)) =
+                            (&mut self.surface, &mut self.renderer)
+                        {
+                            let w = self.width as usize;
+                            let h = self.height as usize;
+
+                            if let Ok(mut buffer) = surface.buffer_mut() {
+                                let opacity = self.config.effective_opacity();
+                                renderer.render_welcome(&mut buffer, w, h, opacity);
+                                let _ = buffer.present();
+                            }
+                        }
                     }
-                }
+                    AppPhase::Terminal => {
+                        // Drain PTY output into the terminal emulator
+                        if let (Some(pty), Some(terminal)) = (&self.pty, &mut self.terminal) {
+                            while let Some(data) = pty.try_read() {
+                                terminal.process(&data);
+                            }
+                        }
 
-                // Render frame
-                if let (Some(surface), Some(renderer), Some(terminal)) =
-                    (&mut self.surface, &mut self.renderer, &self.terminal)
-                {
-                    let w = self.width as usize;
-                    let h = self.height as usize;
+                        // Render terminal frame
+                        if let (Some(surface), Some(renderer), Some(terminal)) =
+                            (&mut self.surface, &mut self.renderer, &self.terminal)
+                        {
+                            let w = self.width as usize;
+                            let h = self.height as usize;
 
-                    if let Ok(mut buffer) = surface.buffer_mut() {
-                        let opacity = self.config.effective_opacity();
-                        renderer.render_frame(&mut buffer, w, h, opacity, terminal);
-                        let _ = buffer.present();
+                            if let Ok(mut buffer) = surface.buffer_mut() {
+                                let opacity = self.config.effective_opacity();
+                                renderer.render_frame(&mut buffer, w, h, opacity, terminal);
+                                let _ = buffer.present();
+                            }
+                        }
                     }
                 }
 
@@ -589,9 +668,9 @@ impl ApplicationHandler for App {
     }
 }
 
-pub fn run(config: Config) -> Result<()> {
+pub fn run(config: Config, show_welcome: bool) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(config);
+    let mut app = App::new(config, show_welcome);
     event_loop.run_app(&mut app)?;
     Ok(())
 }

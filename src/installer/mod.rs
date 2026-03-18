@@ -1,6 +1,6 @@
 mod git;
 mod claude;
-mod shortcuts;
+pub mod shortcuts;
 
 use anyhow::Result;
 use log::info;
@@ -18,7 +18,6 @@ pub fn git_bash_path() -> PathBuf {
     if cfg!(windows) {
         data_dir().join("git").join("bin").join("bash.exe")
     } else {
-        // On macOS/Linux, use system bash
         PathBuf::from("/bin/bash")
     }
 }
@@ -38,19 +37,37 @@ fn installed_marker() -> PathBuf {
     data_dir().join(".installed")
 }
 
+/// Whether the shortcut prompt has been shown (so we only ask once)
+fn shortcut_prompted_marker() -> PathBuf {
+    data_dir().join(".shortcut_prompted")
+}
+
 /// Check if first-time setup has already been completed
 pub fn is_installed() -> bool {
-    // On non-Windows, just check for Claude CLI (no Git install needed)
     if !cfg!(windows) {
         return installed_marker().exists() || claude_cli_path().exists();
     }
     installed_marker().exists() && git_bash_path().exists() && claude_cli_path().exists()
 }
 
-/// Run the full first-time setup:
-/// 1. Download and extract Git for Windows (portable) — Windows only
-/// 2. Install Claude Code CLI via the official installer
-/// 3. Write the installed marker
+/// Check if we still need to show the shortcut prompt
+pub fn needs_shortcut_prompt() -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
+    !shortcut_prompted_marker().exists()
+}
+
+/// Mark that the shortcut prompt has been shown
+pub fn mark_shortcut_prompted() {
+    let marker = shortcut_prompted_marker();
+    if let Some(parent) = marker.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(marker, "ok");
+}
+
+/// Run the full first-time setup (does NOT create shortcuts — that's handled by the welcome screen)
 pub fn run_first_time_setup() -> Result<()> {
     let data = data_dir();
     std::fs::create_dir_all(&data)?;
@@ -66,10 +83,11 @@ pub fn run_first_time_setup() -> Result<()> {
         claude::install_claude_cli(&git_bash_path())?;
     }
 
-    // Create shortcuts (Windows Start Menu + Desktop)
-    info!("Creating shortcuts...");
-    if let Err(e) = shortcuts::create_shortcuts() {
-        log::warn!("Shortcut creation failed (non-fatal): {}", e);
+    // Always create Start Menu shortcut (standard Windows behavior)
+    if cfg!(windows) {
+        if let Err(e) = shortcuts::create_start_menu_shortcut() {
+            log::warn!("Start Menu shortcut failed (non-fatal): {}", e);
+        }
     }
 
     // Mark as installed

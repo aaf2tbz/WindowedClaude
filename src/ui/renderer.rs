@@ -252,6 +252,69 @@ impl Renderer {
     // -----------------------------------------------------------------------
 
     /// Render a complete frame reading cell data from the terminal
+    /// Render the welcome/shortcut prompt screen
+    pub fn render_welcome(
+        &mut self,
+        buf: &mut [u32],
+        buf_width: usize,
+        buf_height: usize,
+        opacity: f32,
+    ) {
+        // Clear background
+        let bg = self.theme.bg_with_opacity(opacity);
+        buf.fill(pack_color(bg));
+
+        // Title bar
+        self.render_title_bar(buf, buf_width, opacity);
+
+        // Welcome content — centered vertically
+        let lines = [
+            "",
+            "  Welcome to WindowedClaude",
+            "",
+            "  Setup complete! Claude Code is ready.",
+            "",
+            "",
+            "  Would you like to create a Desktop shortcut?",
+            "",
+            "  [Y] Yes, create shortcut",
+            "  [N] No thanks",
+            "",
+            "  (Press Enter for Yes, Escape for No)",
+        ];
+
+        let start_y = self.title_bar_height + (buf_height.saturating_sub(self.title_bar_height)) / 4;
+
+        for (i, line) in lines.iter().enumerate() {
+            let y = start_y + i * self.cell_height;
+            if y + self.cell_height > buf_height {
+                break;
+            }
+
+            if line.is_empty() {
+                continue;
+            }
+
+            // Use accent color for the title and option highlights
+            let color = if line.contains("Welcome") {
+                self.theme.cursor // Amber accent for title
+            } else if line.contains("[Y]") || line.contains("[N]") {
+                self.theme.ansi[2] // Green for options
+            } else if line.contains("Enter") || line.contains("Escape") {
+                Color::rgb(
+                    self.theme.fg.r / 2 + 40,
+                    self.theme.fg.g / 2 + 40,
+                    self.theme.fg.b / 2 + 40,
+                ) // Dimmed for hint
+            } else {
+                self.theme.fg
+            };
+
+            self.render_string(buf, buf_width, 0, y, line, color);
+        }
+    }
+
+    /// Render a complete terminal frame reading cell data from the terminal
     pub fn render_frame(
         &mut self,
         buf: &mut [u32],
