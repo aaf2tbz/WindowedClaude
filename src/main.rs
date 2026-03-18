@@ -1,6 +1,10 @@
 // Suppress the console window on Windows when double-clicking the exe
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 mod config;
 mod installer;
 mod terminal;

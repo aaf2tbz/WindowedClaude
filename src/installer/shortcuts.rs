@@ -2,6 +2,13 @@ use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
 
+/// Embedded icon files for shortcuts (compiled into the binary)
+#[cfg(target_os = "macos")]
+const ICON_ICNS: &[u8] = include_bytes!("../../assets/icon.icns");
+
+#[cfg(not(windows))]
+const ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
+
 /// Create Start Menu shortcuts (Windows only)
 pub fn create_start_menu_shortcut() -> Result<()> {
     if !cfg!(windows) {
@@ -76,9 +83,14 @@ fn create_macos_app_bundle(
     let app_dir = parent_dir.join(format!("{}.app", name));
     let contents_dir = app_dir.join("Contents");
     let macos_dir = contents_dir.join("MacOS");
+    let resources_dir = contents_dir.join("Resources");
     std::fs::create_dir_all(&macos_dir)?;
+    std::fs::create_dir_all(&resources_dir)?;
 
-    // Info.plist — minimal, tells macOS this is a GUI app (LSUIElement hides dock icon)
+    // Copy icon into Resources
+    std::fs::write(resources_dir.join("icon.icns"), ICON_ICNS)?;
+
+    // Info.plist — GUI app with icon
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -92,6 +104,8 @@ fn create_macos_app_bundle(
     <string>com.windowedclaude.launcher</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
     <key>LSUIElement</key>
     <false/>
 </dict>
@@ -130,16 +144,21 @@ fn create_linux_desktop_entry(
     exe_path: &str,
     extra_args: &str,
 ) -> Result<()> {
+    // Write icon.png alongside the .desktop file
+    let icon_path = parent_dir.join("icon.png");
+    std::fs::write(&icon_path, ICON_PNG)?;
+
     let args_part = if extra_args.is_empty() {
         String::new()
     } else {
         format!(" {}", extra_args)
     };
     let desktop_entry = format!(
-        "[Desktop Entry]\nType=Application\nName={name}\nExec=\"{exe}\"{args}\nTerminal=false\nCategories=Development;\n",
+        "[Desktop Entry]\nType=Application\nName={name}\nExec=\"{exe}\"{args}\nIcon={icon}\nTerminal=false\nCategories=Development;\n",
         name = name,
         exe = exe_path,
         args = args_part,
+        icon = icon_path.display(),
     );
     let desktop_file = parent_dir.join(format!("{}.desktop", name));
     std::fs::write(&desktop_file, &desktop_entry)?;
