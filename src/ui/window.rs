@@ -1323,11 +1323,10 @@ impl ApplicationHandler for App {
 
                                             // Render tab bar (between title bar and terminal grid)
                                             let tab_bar_y = renderer.title_bar_height;
-                                            let tab_bar_bg = Color::rgba(
+                                            let tab_bar_bg = Color::rgb(
                                                 renderer.theme.title_bar_bg.r,
                                                 renderer.theme.title_bar_bg.g,
                                                 renderer.theme.title_bar_bg.b,
-                                                240,
                                             );
                                             Renderer::fill_rect(&mut buffer, w, 0, tab_bar_y, w, tab_bar_h, tab_bar_bg);
 
@@ -1339,11 +1338,10 @@ impl ApplicationHandler for App {
 
                                                 // Active tab bg
                                                 if is_active {
-                                                    let active_bg = Color::rgba(
-                                                        renderer.theme.cursor.r,
-                                                        renderer.theme.cursor.g,
-                                                        renderer.theme.cursor.b,
-                                                        40,
+                                                    let active_bg = Color::rgb(
+                                                        renderer.theme.title_bar_bg.r.saturating_add(renderer.theme.cursor.r / 6),
+                                                        renderer.theme.title_bar_bg.g.saturating_add(renderer.theme.cursor.g / 6),
+                                                        renderer.theme.title_bar_bg.b.saturating_add(renderer.theme.cursor.b / 6),
                                                     );
                                                     Renderer::fill_rect(&mut buffer, w, tx, tab_bar_y, tab_w, tab_bar_h, active_bg);
                                                     // Bottom accent line
@@ -1355,13 +1353,13 @@ impl ApplicationHandler for App {
                                                 let text_color = if is_active {
                                                     renderer.theme.fg
                                                 } else {
-                                                    Color::rgba(renderer.theme.fg.r, renderer.theme.fg.g, renderer.theme.fg.b, 140)
+                                                    Color::rgb(renderer.theme.fg.r / 2 + 30, renderer.theme.fg.g / 2 + 30, renderer.theme.fg.b / 2 + 30)
                                                 };
                                                 renderer.render_string(&mut buffer, w, tx + 8, tab_bar_y + 6, &title, text_color);
 
                                                 // Close X button
                                                 let close_x = tx + tab_w - 20;
-                                                let close_color = Color::rgba(renderer.theme.fg.r, renderer.theme.fg.g, renderer.theme.fg.b, 100);
+                                                let close_color = Color::rgb(renderer.theme.fg.r / 3 + 20, renderer.theme.fg.g / 3 + 20, renderer.theme.fg.b / 3 + 20);
                                                 renderer.render_string(&mut buffer, w, close_x, tab_bar_y + 6, "x", close_color);
 
                                                 // Right separator
