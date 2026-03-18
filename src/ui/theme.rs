@@ -139,7 +139,7 @@ pub const CLAUDE_DARK: Theme = Theme {
     bg: Color::rgb(13, 13, 17),
     fg: Color::rgb(220, 220, 230),
     cursor: Color::rgb(209, 142, 97),
-    selection_bg: Color::rgba(209, 142, 97, 80),
+    selection_bg: Color::rgb(55, 40, 30),
     selection_fg: Color::rgb(255, 255, 255),
     ansi: [
         Color::rgb(30, 30, 36),     // black
@@ -170,7 +170,7 @@ pub const CLAUDE_LIGHT: Theme = Theme {
     bg: Color::rgb(252, 250, 248),
     fg: Color::rgb(40, 40, 45),
     cursor: Color::rgb(180, 100, 60),
-    selection_bg: Color::rgba(180, 100, 60, 60),
+    selection_bg: Color::rgb(220, 200, 185),
     selection_fg: Color::rgb(40, 40, 45),
     ansi: [
         Color::rgb(40, 40, 45),
@@ -201,7 +201,7 @@ pub const MIDNIGHT: Theme = Theme {
     bg: Color::rgb(5, 5, 12),
     fg: Color::rgb(190, 205, 235),
     cursor: Color::rgb(100, 140, 255),
-    selection_bg: Color::rgba(100, 140, 255, 60),
+    selection_bg: Color::rgb(25, 30, 55),
     selection_fg: Color::rgb(230, 235, 255),
     ansi: [
         Color::rgb(20, 20, 35),     // black — boosted from 15 for contrast
@@ -232,7 +232,7 @@ pub const SOLARIZED_DARK: Theme = Theme {
     bg: Color::rgb(0, 43, 54),
     fg: Color::rgb(131, 148, 150),
     cursor: Color::rgb(203, 75, 22),
-    selection_bg: Color::rgba(7, 54, 66, 200),
+    selection_bg: Color::rgb(7, 54, 66),
     selection_fg: Color::rgb(147, 161, 161),
     ansi: [
         Color::rgb(7, 54, 66),       // base02  (black)
@@ -263,7 +263,7 @@ pub const DRACULA: Theme = Theme {
     bg: Color::rgb(40, 42, 54),
     fg: Color::rgb(248, 248, 242),
     cursor: Color::rgb(248, 248, 242),
-    selection_bg: Color::rgba(68, 71, 90, 200),
+    selection_bg: Color::rgb(68, 71, 90),
     selection_fg: Color::rgb(248, 248, 242),
     ansi: [
         Color::rgb(33, 34, 44),       // black
@@ -294,7 +294,7 @@ pub const NORD: Theme = Theme {
     bg: Color::rgb(46, 52, 64),
     fg: Color::rgb(216, 222, 233),
     cursor: Color::rgb(216, 222, 233),
-    selection_bg: Color::rgba(67, 76, 94, 200),
+    selection_bg: Color::rgb(67, 76, 94),
     selection_fg: Color::rgb(236, 239, 244),
     ansi: [
         Color::rgb(59, 66, 82),       // black (nord3)
@@ -325,7 +325,7 @@ pub const MONOKAI: Theme = Theme {
     bg: Color::rgb(45, 43, 40),
     fg: Color::rgb(252, 252, 250),
     cursor: Color::rgb(252, 252, 250),
-    selection_bg: Color::rgba(87, 82, 74, 200),
+    selection_bg: Color::rgb(87, 82, 74),
     selection_fg: Color::rgb(252, 252, 250),
     ansi: [
         Color::rgb(55, 53, 50),       // black
@@ -356,7 +356,7 @@ pub const GRUVBOX: Theme = Theme {
     bg: Color::rgb(40, 40, 40),
     fg: Color::rgb(235, 219, 178),
     cursor: Color::rgb(254, 128, 25),
-    selection_bg: Color::rgba(69, 65, 57, 200),
+    selection_bg: Color::rgb(69, 65, 57),
     selection_fg: Color::rgb(235, 219, 178),
     ansi: [
         Color::rgb(40, 40, 40),       // bg0

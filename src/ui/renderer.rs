@@ -65,7 +65,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(theme: Theme, font_size: f32) -> Self {
+    pub fn new(theme: Theme, font_size: f32, padding: usize) -> Self {
         let font = Self::load_font(false);
         let font_bold = Self::load_font(true);
 
@@ -83,7 +83,7 @@ impl Renderer {
         let cell_height = ((metrics.ascent - metrics.descent + metrics.line_gap).ceil() as usize).max(1);
         let ascent = metrics.ascent.ceil() as usize;
 
-        let pad = 12; // Consistent padding on all sides of the terminal grid
+        let pad = padding; // Configurable padding on all sides of the terminal grid
 
         Self {
             theme,
@@ -833,7 +833,7 @@ impl Renderer {
 
         // Centered panel dimensions
         let panel_w = 420usize;
-        let panel_h = 320usize;
+        let panel_h = 360usize;
         let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
         let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
         let panel_r = 14usize;
@@ -956,6 +956,21 @@ impl Renderer {
             row_y += row_spacing;
         }
 
+        // Padding row
+        draw_row_bg(buf, row_y, current_row);
+        self.render_string(buf, buf_width, row_x, row_y, "Padding", self.theme.fg);
+        let pad_str = format!("{}px", config.padding);
+        self.render_string(buf, buf_width, value_x + 30, row_y, &pad_str, self.theme.fg);
+        let is_hover = hover_row == current_row;
+        let minus_bg = if is_hover { btn_bg_hover } else { btn_bg_normal };
+        Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
+        self.render_string(buf, buf_width, value_x + 6, row_y, "-", self.theme.fg);
+        let plus_x = value_x + 30 + pad_str.len() * self.cell_width + 8;
+        Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
+        self.render_string(buf, buf_width, plus_x + 6, row_y, "+", self.theme.fg);
+        current_row += 1;
+        row_y += row_spacing;
+
         // Reinstall Shortcuts button
         let btn_text = "Reinstall Shortcuts";
         let btn_w = btn_text.len() * self.cell_width + 24;
@@ -990,7 +1005,7 @@ impl Renderer {
     /// Get settings panel bounds for hit testing
     pub fn settings_panel_bounds(&self, buf_width: usize, buf_height: usize) -> (usize, usize, usize, usize) {
         let panel_w = 420usize;
-        let panel_h = 320usize;
+        let panel_h = 360usize;
         let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
         let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
         (panel_x, panel_y, panel_w, panel_h)
