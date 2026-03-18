@@ -2,7 +2,7 @@
 
 **Claude Code on Windows shouldn't be hard.** WindowedClaude wraps every install step into a single executable — no PowerShell, no PATH configs, no Git installs. Double-click, and you're in.
 
-Built in Rust. Lightweight. Themed. Fast.
+Built in Rust. Lightweight. Themed. Fast. For Windows and Mac coders.
 
 ---
 
