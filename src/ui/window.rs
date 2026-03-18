@@ -26,7 +26,7 @@ const TITLE_BAR_HEIGHT: f64 = 36.0;
 /// Hit zones for title bar buttons (relative to right edge)
 const BTN_SIZE: f64 = 12.0;
 const BTN_SPACING: f64 = 28.0;
-const BTN_RIGHT_PAD: f64 = 20.0;
+const BTN_RIGHT_PAD: f64 = 30.0;
 
 /// App state machine
 #[derive(Debug, Clone, PartialEq)]
@@ -395,7 +395,12 @@ impl ApplicationHandler for App {
 
         self.surface = Some(surface);
         self.renderer = Some(renderer);
-        self.window = Some(window);
+        self.window = Some(window.clone());
+
+        // macOS: use native APIs for rounded corners + opacity
+        // (softbuffer on macOS ignores per-pixel alpha)
+        #[cfg(target_os = "macos")]
+        configure_macos_window(&window, self.config.effective_opacity());
 
         // Start the appropriate phase
         match &self.phase {
@@ -765,6 +770,10 @@ impl ApplicationHandler for App {
                                         if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 {
                                             if mx >= value_x && mx <= value_x + 22 {
                                                 self.config.adjust_opacity(-0.05);
+                                                #[cfg(target_os = "macos")]
+                                                if let Some(w) = &self.window {
+                                                    update_macos_opacity(w, self.config.effective_opacity());
+                                                }
                                                 self.update_title();
                                                 self.settings_click_flash = 6;
                                                 self.request_redraw();
@@ -774,6 +783,10 @@ impl ApplicationHandler for App {
                                             let plus_x = value_x + 30 + opacity_str_len * renderer.cell_width + 8;
                                             if mx >= plus_x && mx <= plus_x + 22 {
                                                 self.config.adjust_opacity(0.05);
+                                                #[cfg(target_os = "macos")]
+                                                if let Some(w) = &self.window {
+                                                    update_macos_opacity(w, self.config.effective_opacity());
+                                                }
                                                 self.update_title();
                                                 self.settings_click_flash = 6;
                                                 self.request_redraw();
@@ -1106,6 +1119,10 @@ impl ApplicationHandler for App {
                     // Toggle Transparency
                     if KeyBinds::combo_matches(kb.get("toggle_transparency"), ctrl, shift, key) {
                         self.config.toggle_transparency();
+                        #[cfg(target_os = "macos")]
+                        if let Some(w) = &self.window {
+                            update_macos_opacity(w, self.config.effective_opacity());
+                        }
                         self.update_title();
                         self.request_redraw();
                         return;
@@ -1147,6 +1164,10 @@ impl ApplicationHandler for App {
                     // Increase Opacity
                     if KeyBinds::combo_matches(kb.get("increase_opacity"), ctrl, shift, key) {
                         self.config.adjust_opacity(0.05);
+                        #[cfg(target_os = "macos")]
+                        if let Some(w) = &self.window {
+                            update_macos_opacity(w, self.config.effective_opacity());
+                        }
                         self.update_title();
                         self.request_redraw();
                         return;
@@ -1155,6 +1176,10 @@ impl ApplicationHandler for App {
                     // Decrease Opacity
                     if KeyBinds::combo_matches(kb.get("decrease_opacity"), ctrl, shift, key) {
                         self.config.adjust_opacity(-0.05);
+                        #[cfg(target_os = "macos")]
+                        if let Some(w) = &self.window {
+                            update_macos_opacity(w, self.config.effective_opacity());
+                        }
                         self.update_title();
                         self.request_redraw();
                         return;
@@ -1443,4 +1468,64 @@ pub fn run(config: Config, needs_install: bool, needs_welcome: bool) -> Result<(
     let mut app = App::new(config, needs_install, needs_welcome);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// macOS native window configuration
+// ---------------------------------------------------------------------------
+// softbuffer on macOS ignores per-pixel alpha, so we use native Cocoa APIs
+// for window transparency (NSWindow.alphaValue) and rounded corners
+// (CALayer.cornerRadius). These work at the compositor level.
+
+#[cfg(target_os = "macos")]
+fn get_ns_window(window: &Window) -> Option<*mut std::ffi::c_void> {
+    use winit::raw_window_handle::HasWindowHandle;
+    let handle = window.window_handle().ok()?;
+    match handle.as_raw() {
+        winit::raw_window_handle::RawWindowHandle::AppKit(appkit) => {
+            Some(appkit.ns_view.as_ptr() as *mut std::ffi::c_void)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_window(window: &Window, opacity: f32) {
+    use objc::runtime::{Object, YES};
+
+    let Some(ns_view_ptr) = get_ns_window(window) else { return };
+
+    unsafe {
+        let ns_view = ns_view_ptr as *mut Object;
+
+        // Get the NSWindow from the view
+        let ns_window: *mut Object = msg_send![ns_view, window];
+
+        // Rounded corners via CALayer
+        let _: () = msg_send![ns_view, setWantsLayer: YES];
+        let layer: *mut Object = msg_send![ns_view, layer];
+        let _: () = msg_send![layer, setCornerRadius: 12.0_f64];
+        let _: () = msg_send![layer, setMasksToBounds: YES];
+
+        // Window-level opacity (works even though softbuffer ignores pixel alpha)
+        let _: () = msg_send![ns_window, setAlphaValue: opacity as f64];
+
+        // Ensure window background is transparent so corners show through
+        let ns_color_class = objc::runtime::Class::get("NSColor").unwrap();
+        let clear_color: *mut Object = msg_send![ns_color_class, clearColor];
+        let _: () = msg_send![ns_window, setBackgroundColor: clear_color];
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn update_macos_opacity(window: &Window, opacity: f32) {
+    use objc::runtime::Object;
+
+    let Some(ns_view_ptr) = get_ns_window(window) else { return };
+
+    unsafe {
+        let ns_view = ns_view_ptr as *mut Object;
+        let ns_window: *mut Object = msg_send![ns_view, window];
+        let _: () = msg_send![ns_window, setAlphaValue: opacity as f64];
+    }
 }

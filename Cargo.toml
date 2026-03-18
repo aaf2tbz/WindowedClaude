@@ -37,6 +37,10 @@ env_logger = "0.11"
 anyhow = "1"
 thiserror = "2"
 
+# macOS-specific (native window opacity + corner radius)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
 # Windows-specific
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

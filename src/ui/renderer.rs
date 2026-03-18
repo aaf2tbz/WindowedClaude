@@ -497,7 +497,7 @@ impl Renderer {
         // Window buttons (right side — traffic light dots)
         let dot_r = 6usize;
         let btn_y = self.title_bar_height / 2;
-        let right = stride.saturating_sub(20);
+        let right = stride.saturating_sub(30);
 
         // Close (red)
         Self::fill_rounded_rect(buf, stride, right.saturating_sub(dot_r), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, dot_r, Color::rgb(220, 80, 80));
