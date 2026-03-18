@@ -21,10 +21,12 @@ pub fn data_dir() -> PathBuf {
         .join("windowed-claude")
 }
 
-/// Path to the bundled/downloaded Git Bash executable (Windows only)
+/// Path to Git Bash executable
 pub fn git_bash_path() -> PathBuf {
     if cfg!(windows) {
-        data_dir().join("git").join("bin").join("bash.exe")
+        // Check standard Git for Windows install locations
+        git::find_system_git_bash()
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"))
     } else {
         PathBuf::from("/bin/bash")
     }
@@ -55,7 +57,10 @@ pub fn is_installed() -> bool {
     if !cfg!(windows) {
         return installed_marker().exists() || claude_cli_path().exists();
     }
-    installed_marker().exists() && git_bash_path().exists() && claude_cli_path().exists()
+    // On Windows: need both Git Bash and Claude CLI
+    installed_marker().exists()
+        && git::find_system_git_bash().is_some()
+        && claude_cli_path().exists()
 }
 
 /// Check if we still need to show the shortcut prompt
@@ -87,8 +92,8 @@ pub fn run_first_time_setup_with_progress(tx: &Sender<InstallMsg>) -> Result<()>
     std::fs::create_dir_all(&data)?;
 
     if cfg!(windows) {
-        progress(tx, "Downloading Git for Windows...");
-        git::install_git_portable(&data)?;
+        progress(tx, "Installing Git for Windows...");
+        git::install_git(&data)?;
 
         progress(tx, "Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
