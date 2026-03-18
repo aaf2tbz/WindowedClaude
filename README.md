@@ -14,7 +14,8 @@ WindowedClaude is a themed terminal window that:
 - **Multi-tab terminal** — run multiple Claude sessions side by side (`Ctrl+N`)
 - **8 polished themes** — full ANSI 16-color palettes with canonical color values
 - **Settings panel** — in-app GUI to change theme, font size, transparency, and reinstall shortcuts
-- **Interactive hover & click feedback** — settings buttons highlight on hover and flash on click
+- **Keybinds editor** — view, rebind, save, discard, or reset all 12 keyboard shortcuts from the UI
+- **Interactive hover & click feedback** — settings/keybinds buttons highlight on hover and flash on click
 - **Fully rounded window corners** — 12px transparent pixel masking for a modern look
 - **Window transparency** — adjustable opacity so you can see through while working
 - **Auto-accept mode** — dedicated Desktop + Start Menu shortcuts to run with `--dangerously-skip-permissions`
@@ -134,6 +135,42 @@ All interactive elements have **hover highlighting** (accent color background) a
 | **Transparency** | Click to toggle | Enables/disables window transparency |
 | **Opacity** | `-` / `+` buttons | 5% to 100%, only visible when transparency is on |
 | **Reinstall Shortcuts** | Click button | Recreates Desktop + Start Menu shortcuts with icons |
+
+---
+
+## Keybinds Editor
+
+Click the **Keybinds** pill in the title bar to open the keybind configuration overlay.
+
+**Layout:** Three-column table showing Action, Default value, and Current value for all 12 configurable shortcuts.
+
+**How to rebind:**
+1. Click any row — it enters key capture mode ("Press keys...")
+2. Press your desired key combo (e.g., `Ctrl+Shift+K`)
+3. The new binding appears in the Current column, highlighted in accent color if it differs from the default
+4. Press `Escape` to cancel editing without changing
+
+**Bottom buttons:**
+- **Save** — persists all changes to `config.json`
+- **Discard** — reverts to last saved state (undoes unsaved edits)
+- **Reset to Defaults** — restores all 12 keybinds to factory values
+
+**Configurable actions:**
+
+| Action | Default |
+|--------|---------|
+| New Tab | `Ctrl+N` |
+| Close Tab | `Ctrl+W` |
+| Next Tab | `Ctrl+Tab` |
+| Prev Tab | `Ctrl+Shift+Tab` |
+| Toggle Transparency | `Ctrl+Shift+O` |
+| Copy | `Ctrl+Shift+C` |
+| Paste | `Ctrl+Shift+V` |
+| Increase Opacity | `Ctrl+Shift+=` |
+| Decrease Opacity | `Ctrl+Shift+-` |
+| Font Size + | `Ctrl+=` |
+| Font Size - | `Ctrl+-` |
+| Reset Font | `Ctrl+0` |
 
 ---
 
