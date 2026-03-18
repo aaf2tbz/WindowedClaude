@@ -10,3 +10,5 @@ a desktop shortcut for ease of access, and opens a friendly terminal for claude 
 and easy to use functions. WindowedClaude bypasses the utter complete annoyances of installing 
 claude on windows into a straighforward and simplified process that anyone can understand. 
 
+WindowedClaude is made purely in rust, meaning a 100% quick runtime, and takes almost no file space to install. 
+
