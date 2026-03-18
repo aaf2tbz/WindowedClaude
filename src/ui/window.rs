@@ -482,7 +482,7 @@ impl ApplicationHandler for App {
                         let my = position.y as usize;
                         if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
                             let header_y = py + 16;
-                            let row_h = renderer.cell_height + 10;
+                            let row_h = renderer.cell_height + 12;
                             let sep_y = header_y + renderer.cell_height + 12 + renderer.cell_height + 4;
                             let rows_start_y = sep_y + 6;
                             if my >= rows_start_y {
@@ -626,7 +626,7 @@ impl ApplicationHandler for App {
 
                                 if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
                                     let header_y = py + 16;
-                                    let row_h = renderer.cell_height + 10;
+                                    let row_h = renderer.cell_height + 12;
                                     let sep_y = header_y + renderer.cell_height + 12 + renderer.cell_height + 4;
                                     let rows_start_y = sep_y + 6;
                                     let num_actions = crate::config::KEYBIND_ACTIONS.len();
@@ -642,14 +642,16 @@ impl ApplicationHandler for App {
                                         }
                                     }
 
-                                    // Check bottom buttons
-                                    let btn_y = rows_start_y + num_actions * row_h + 12;
+                                    // Check bottom buttons (after separator)
+                                    let btn_y = rows_start_y + num_actions * row_h + 4 + 12;
                                     let btn_h = renderer.cell_height + 10;
 
+                                    let btn_pad = 14;
+                                    let btn_gap = 20;
                                     if my >= btn_y && my <= btn_y + btn_h {
                                         // Save button
-                                        let save_w = "Save".len() * renderer.cell_width + 20;
-                                        let save_x = px + 20;
+                                        let save_w = "Save".len() * renderer.cell_width + btn_pad * 2;
+                                        let save_x = px + 24;
                                         if mx >= save_x && mx <= save_x + save_w {
                                             self.config.keybinds = self.keybinds_draft.clone();
                                             self.config.save();
@@ -660,8 +662,8 @@ impl ApplicationHandler for App {
                                         }
 
                                         // Discard button
-                                        let discard_w = "Discard".len() * renderer.cell_width + 20;
-                                        let discard_x = save_x + save_w + 12;
+                                        let discard_w = "Discard".len() * renderer.cell_width + btn_pad * 2;
+                                        let discard_x = save_x + save_w + btn_gap;
                                         if mx >= discard_x && mx <= discard_x + discard_w {
                                             self.keybinds_draft = self.config.keybinds.clone();
                                             self.keybinds_open = false;
@@ -671,8 +673,8 @@ impl ApplicationHandler for App {
                                         }
 
                                         // Reset button
-                                        let reset_w = "Reset to Defaults".len() * renderer.cell_width + 20;
-                                        let reset_x = discard_x + discard_w + 12;
+                                        let reset_w = "Reset Defaults".len() * renderer.cell_width + btn_pad * 2;
+                                        let reset_x = discard_x + discard_w + btn_gap;
                                         if mx >= reset_x && mx <= reset_x + reset_w {
                                             self.keybinds_draft.reset_all();
                                             info!("Keybinds reset to defaults");

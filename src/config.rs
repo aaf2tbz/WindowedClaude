@@ -10,14 +10,14 @@ pub const KEYBIND_ACTIONS: &[(&str, &str, &str)] = &[
     ("close_tab",       "Close Tab",        "Ctrl+W"),
     ("next_tab",        "Next Tab",         "Ctrl+Tab"),
     ("prev_tab",        "Prev Tab",         "Ctrl+Shift+Tab"),
-    ("toggle_transparency", "Toggle Transparency", "Ctrl+Shift+O"),
+    ("toggle_transparency", "Transparency", "Ctrl+Shift+O"),
     ("copy",            "Copy",             "Ctrl+Shift+C"),
     ("paste",           "Paste",            "Ctrl+Shift+V"),
-    ("increase_opacity","Increase Opacity", "Ctrl+Shift+="),
-    ("decrease_opacity","Decrease Opacity", "Ctrl+Shift+-"),
-    ("increase_font",   "Font Size +",      "Ctrl+="),
-    ("decrease_font",   "Font Size -",      "Ctrl+-"),
-    ("reset_font",      "Reset Font",       "Ctrl+0"),
+    ("increase_opacity","Opacity +",        "Ctrl+Shift+="),
+    ("decrease_opacity","Opacity -",        "Ctrl+Shift+-"),
+    ("increase_font",   "Font +",           "Ctrl+="),
+    ("decrease_font",   "Font -",           "Ctrl+-"),
+    ("reset_font",      "Font Reset",       "Ctrl+0"),
 ];
 
 /// Keybind configuration — maps action IDs to key combo strings
