@@ -1,5 +1,6 @@
 mod git;
 mod claude;
+mod shortcuts;
 
 use anyhow::Result;
 use log::info;
@@ -63,6 +64,12 @@ pub fn run_first_time_setup() -> Result<()> {
     } else {
         info!("Step 1/1: Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
+    }
+
+    // Create shortcuts (Windows Start Menu + Desktop)
+    info!("Creating shortcuts...");
+    if let Err(e) = shortcuts::create_shortcuts() {
+        log::warn!("Shortcut creation failed (non-fatal): {}", e);
     }
 
     // Mark as installed
