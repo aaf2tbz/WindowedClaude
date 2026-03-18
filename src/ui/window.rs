@@ -54,6 +54,8 @@ struct TabState {
     title: String,
     terminal: Terminal,
     pty: Option<PtySession>,
+    child_exited: bool,
+    exit_status: Option<String>,
 }
 
 struct App {
@@ -195,9 +197,46 @@ impl App {
             title: format!("Claude {}", self.tabs.len() + 1),
             terminal,
             pty,
+            child_exited: false,
+            exit_status: None,
         });
 
         self.active_tab = self.tabs.len() - 1;
+    }
+
+    /// Kill all child processes and drop PTY sessions (call before exit)
+    fn cleanup_all_tabs(&mut self) {
+        for tab in &mut self.tabs {
+            // PtySession::Drop will kill the child before dropping the master PTY
+            tab.pty.take();
+        }
+        self.tabs.clear();
+    }
+
+    /// Respawn the PTY in an existing tab (after child process exits)
+    fn respawn_tab(&mut self, index: usize) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            let git_bash = self.config.git_bash_path.clone()
+                .unwrap_or_else(installer::git_bash_path);
+            let claude_cli = installer::claude_cli_path();
+            let (cols, rows) = self.renderer.as_ref()
+                .map(|r| (r.cols as u16, r.rows as u16))
+                .unwrap_or((120, 35));
+
+            tab.terminal = Terminal::new(cols as usize, rows as usize);
+            tab.child_exited = false;
+            tab.exit_status = None;
+            tab.pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
+                Ok(session) => {
+                    info!("PTY respawned for tab {}", tab.id);
+                    Some(session)
+                }
+                Err(e) => {
+                    log::error!("Failed to respawn PTY: {}", e);
+                    None
+                }
+            };
+        }
     }
 
     /// Close the tab at the given index. Returns true if we should close the window.
@@ -443,6 +482,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 info!("Window close requested");
+                self.cleanup_all_tabs();
                 event_loop.exit();
             }
 
@@ -576,6 +616,7 @@ impl ApplicationHandler for App {
                             // Check title bar buttons first
                             match self.title_bar_button(self.cursor_x, self.cursor_y) {
                                 Some(TitleBarButton::Close) => {
+                                    self.cleanup_all_tabs();
                                     event_loop.exit();
                                     return;
                                 }
@@ -1242,6 +1283,17 @@ impl ApplicationHandler for App {
                         self.rebuild_renderer();
                         return;
                     }
+
+                    // Force Kill — kill the child process directly (fallback when Ctrl+C fails)
+                    if KeyBinds::combo_matches(kb.get("force_kill"), ctrl, shift, key) {
+                        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                            if let Some(pty) = &mut tab.pty {
+                                info!("Force killing child process for tab {}", tab.id);
+                                let _ = pty.kill();
+                            }
+                        }
+                        return;
+                    }
                 }
 
                 // Ctrl+1-9 — jump to tab by index (always hardcoded, not rebindable)
@@ -1284,6 +1336,18 @@ impl ApplicationHandler for App {
                         }
                         self.request_redraw();
                         return;
+                    }
+                }
+
+                // --- Handle dead process: Enter to respawn ---
+                if let Some(tab) = self.tabs.get(self.active_tab) {
+                    if tab.child_exited {
+                        if matches!(&logical_key, Key::Named(NamedKey::Enter)) {
+                            let idx = self.active_tab;
+                            self.respawn_tab(idx);
+                            self.request_redraw();
+                        }
+                        return; // Don't pass input to dead PTY
                     }
                 }
 
@@ -1436,6 +1500,37 @@ impl ApplicationHandler for App {
                             }
                         }
 
+                        // Poll child process status for all tabs
+                        for tab in &mut self.tabs {
+                            if tab.child_exited {
+                                continue;
+                            }
+                            if let Some(pty) = &tab.pty {
+                                match pty.try_wait() {
+                                    Ok(Some(status)) => {
+                                        tab.child_exited = true;
+                                        tab.exit_status = Some(if status.success() {
+                                            "Process exited normally".to_string()
+                                        } else {
+                                            format!("Process exited (code {})", status)
+                                        });
+                                        log::info!("Tab {} child exited: {:?}", tab.id, tab.exit_status);
+                                    }
+                                    Ok(None) => {
+                                        // Also check if PTY reader thread died (pipe broken)
+                                        if !pty.is_reader_alive() {
+                                            tab.child_exited = true;
+                                            tab.exit_status = Some("Process connection lost".to_string());
+                                            log::warn!("Tab {} PTY reader died", tab.id);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to check child status for tab {}: {}", tab.id, e);
+                                    }
+                                }
+                            }
+                        }
+
                         // Render active tab's terminal frame
                         if let Some(surface) = &mut self.surface {
                             if let Some(renderer) = &mut self.renderer {
@@ -1503,6 +1598,20 @@ impl ApplicationHandler for App {
                                         } else {
                                             // Single tab: no tab bar, render normally
                                             renderer.render_frame(&mut buffer, w, h, opacity, &tab.terminal);
+                                        }
+                                    }
+
+                                    // Dead process status bar
+                                    if let Some(tab) = self.tabs.get(active) {
+                                        if tab.child_exited {
+                                            let bar_h = 28usize;
+                                            let bar_y = h.saturating_sub(bar_h);
+                                            let bar_bg = Color::rgb(80, 20, 20);
+                                            Renderer::fill_rect(&mut buffer, w, 0, bar_y, w, bar_h, bar_bg);
+                                            let msg = tab.exit_status.as_deref().unwrap_or("Process exited");
+                                            let hint = format!("{} — Press Enter to respawn, Ctrl+W to close", msg);
+                                            let text_color = Color::rgb(255, 200, 200);
+                                            renderer.render_string(&mut buffer, w, 12, bar_y + 7, &hint, text_color);
                                         }
                                     }
 

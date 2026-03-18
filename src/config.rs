@@ -18,6 +18,7 @@ pub const KEYBIND_ACTIONS: &[(&str, &str, &str)] = &[
     ("increase_font",   "Font +",           "Ctrl+="),
     ("decrease_font",   "Font -",           "Ctrl+-"),
     ("reset_font",      "Font Reset",       "Ctrl+0"),
+    ("force_kill",      "Force Kill",       "Ctrl+Shift+K"),
 ];
 
 /// Keybind configuration — maps action IDs to key combo strings
