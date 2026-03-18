@@ -32,13 +32,15 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: cargo build --release --target aarch64-apple-darwin
       - run: cargo build --release --target x86_64-apple-darwin
-      - name: Create universal binary and zip
+      - name: Create universal binary, sign, and zip
         run: |
           lipo -create \
             target/aarch64-apple-darwin/release/windowed-claude \
             target/x86_64-apple-darwin/release/windowed-claude \
             -output WindowedClaude
           chmod +x WindowedClaude
+          # Ad-hoc codesign so macOS doesn't flag as damaged/unsafe
+          codesign --force --sign - WindowedClaude
           zip WindowedClaude-macos.zip WindowedClaude
       - uses: actions/upload-artifact@v4
         with:

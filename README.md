@@ -13,10 +13,17 @@ Grab the latest from [Releases](https://github.com/aaf2tbz/WindowedClaude/releas
 | Platform | File | Notes |
 |----------|------|-------|
 | Windows x64 | `windowed-claude.exe` | Double-click and go |
-| macOS (Universal) | `WindowedClaude-macos.zip` | Unzip, then `./WindowedClaude` |
+| macOS (Universal) | `WindowedClaude-macos.zip` | Unzip, remove quarantine (see below) |
 | Linux x64 | `WindowedClaude-linux.tar.gz` | Extract, then `./WindowedClaude` |
 
 On Windows, first launch auto-installs Git + Claude CLI. On macOS/Linux, install [Claude CLI](https://claude.ai) first.
+
+**macOS Gatekeeper:** macOS may flag the app as unidentified. After unzipping, run:
+```bash
+xattr -cr WindowedClaude
+./WindowedClaude
+```
+Or: System Settings > Privacy & Security > click "Allow Anyway" after the first blocked launch.
 
 ---
 
