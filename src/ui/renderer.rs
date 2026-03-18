@@ -5,6 +5,9 @@ use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor}
 use fontdue::{Font, FontSettings};
 use std::collections::HashMap;
 
+/// Radius for rounding window corners (transparent masking)
+const WINDOW_CORNER_RADIUS: usize = 12;
+
 /// Glyph cache entry
 struct GlyphBitmap {
     width: usize,
@@ -14,16 +17,16 @@ struct GlyphBitmap {
     y_offset: i32,
 }
 
-/// Hit zone for the theme selector pill in the title bar
+/// Hit zone for a pill button in the title bar
 #[derive(Debug, Clone, Copy, Default)]
-pub struct ThemePillBounds {
+pub struct PillBounds {
     pub x: usize,
     pub y: usize,
     pub w: usize,
     pub h: usize,
 }
 
-impl ThemePillBounds {
+impl PillBounds {
     pub fn contains(&self, px: f64, py: f64) -> bool {
         px >= self.x as f64
             && px <= (self.x + self.w) as f64
@@ -32,11 +35,16 @@ impl ThemePillBounds {
     }
 }
 
+/// For backward compatibility
+pub type ThemePillBounds = PillBounds;
+
 /// Software renderer — draws terminal cells into a pixel buffer via fontdue.
 pub struct Renderer {
     pub theme: Theme,
     /// Bounds of the theme pill in the title bar (for click detection)
     pub theme_pill: ThemePillBounds,
+    /// Bounds of the settings pill in the title bar
+    pub settings_pill: PillBounds,
     pub cell_width: usize,
     pub cell_height: usize,
     pub cols: usize,
@@ -78,6 +86,7 @@ impl Renderer {
         Self {
             theme,
             theme_pill: ThemePillBounds::default(),
+            settings_pill: PillBounds::default(),
             cell_width,
             cell_height,
             cols: 120,
@@ -192,7 +201,7 @@ impl Renderer {
     // Drawing primitives
     // -----------------------------------------------------------------------
 
-    fn fill_rect(buf: &mut [u32], stride: usize, x: usize, y: usize, w: usize, h: usize, c: Color) {
+    pub fn fill_rect(buf: &mut [u32], stride: usize, x: usize, y: usize, w: usize, h: usize, c: Color) {
         let packed = pack_color(c);
         let max_y = buf.len() / stride.max(1);
         for row in y..(y + h).min(max_y) {
@@ -421,6 +430,55 @@ impl Renderer {
             h: pill_h,
         };
 
+        // Settings pill (after theme pill)
+        let settings_text = "Settings";
+        let settings_text_w = settings_text.len() * self.cell_width;
+        let settings_w = settings_text_w + pill_pad_h * 2;
+        let settings_h = pill_h;
+        let settings_x = pill_x + pill_w + 10;
+        let settings_y = pill_y;
+
+        // Dimmer background than theme pill
+        let settings_bg = Color::rgba(
+            self.theme.title_bar_text.r,
+            self.theme.title_bar_text.g,
+            self.theme.title_bar_text.b,
+            30,
+        );
+        Self::fill_rounded_rect(buf, stride, settings_x, settings_y, settings_w, settings_h, settings_h / 2, settings_bg);
+
+        // Border
+        let settings_border = Color::rgba(
+            self.theme.title_bar_text.r,
+            self.theme.title_bar_text.g,
+            self.theme.title_bar_text.b,
+            80,
+        );
+        Self::stroke_rounded_rect(
+            buf, stride, settings_x, settings_y, settings_w, settings_h,
+            settings_h / 2, 1, settings_border,
+        );
+
+        // Text
+        let settings_text_color = Color::rgba(
+            self.theme.title_bar_text.r,
+            self.theme.title_bar_text.g,
+            self.theme.title_bar_text.b,
+            180,
+        );
+        self.render_string(
+            buf, stride,
+            settings_x + pill_pad_h, settings_y + pill_pad_v,
+            settings_text, settings_text_color,
+        );
+
+        self.settings_pill = PillBounds {
+            x: settings_x,
+            y: settings_y,
+            w: settings_w,
+            h: settings_h,
+        };
+
         // Window buttons (right side — traffic light dots)
         let dot_r = 6usize;
         let btn_y = self.title_bar_height / 2;
@@ -435,7 +493,7 @@ impl Renderer {
     }
 
     /// Render a string at pixel coordinates
-    fn render_string(&mut self, buf: &mut [u32], stride: usize, x: usize, y: usize, text: &str, color: Color) {
+    pub fn render_string(&mut self, buf: &mut [u32], stride: usize, x: usize, y: usize, text: &str, color: Color) {
         let mut cx = x;
         for ch in text.chars() {
             self.rasterize_glyph(ch, false);
@@ -505,6 +563,8 @@ impl Renderer {
             };
             self.render_string(buf, buf_width, 0, y, line, color);
         }
+
+        Self::mask_window_corners(buf, buf_width, buf_height);
     }
 
     /// Render the welcome/shortcut prompt screen
@@ -567,6 +627,8 @@ impl Renderer {
 
             self.render_string(buf, buf_width, 0, y, line, color);
         }
+
+        Self::mask_window_corners(buf, buf_width, buf_height);
     }
 
     /// Render a complete terminal frame reading cell data from the terminal
@@ -732,6 +794,183 @@ impl Renderer {
                         Self::fill_rect(buf, buf_width, px, py + self.cell_height - 2, self.cell_width, 2, self.theme.cursor);
                     }
                     _ => {}
+                }
+            }
+        }
+
+        Self::mask_window_corners(buf, buf_width, buf_height);
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings overlay
+    // -----------------------------------------------------------------------
+
+    /// Render the settings overlay on top of everything
+    pub fn render_settings_overlay(
+        &mut self,
+        buf: &mut [u32],
+        buf_width: usize,
+        buf_height: usize,
+        config: &crate::config::Config,
+    ) {
+        // Semi-transparent dark overlay covering whole window
+        let overlay = Color::rgba(0, 0, 0, 160);
+        for i in 0..buf.len() {
+            let bg_packed = buf[i];
+            buf[i] = blend(overlay, 160, bg_packed);
+        }
+
+        // Centered panel dimensions
+        let panel_w = 420usize;
+        let panel_h = 320usize;
+        let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
+        let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
+        let panel_r = 14usize;
+
+        // Panel background
+        let panel_bg = Color::rgb(
+            self.theme.bg.r.saturating_add(15),
+            self.theme.bg.g.saturating_add(15),
+            self.theme.bg.b.saturating_add(15),
+        );
+        Self::fill_rounded_rect(buf, buf_width, panel_x, panel_y, panel_w, panel_h, panel_r, panel_bg);
+
+        // Panel border
+        Self::stroke_rounded_rect(buf, buf_width, panel_x, panel_y, panel_w, panel_h, panel_r, 1, self.theme.window_border);
+
+        // Header
+        let header_y = panel_y + 16;
+        self.render_string(buf, buf_width, panel_x + 20, header_y, "Settings", self.theme.cursor);
+
+        // Close X button (top right of panel)
+        let close_x = panel_x + panel_w - 30;
+        let close_y = panel_y + 12;
+        self.render_string(buf, buf_width, close_x, close_y, "X", self.theme.fg);
+
+        // Settings rows
+        let row_x = panel_x + 20;
+        let value_x = panel_x + 220;
+        let mut row_y = header_y + self.cell_height + 20;
+        let row_spacing = self.cell_height + 16;
+
+        // Theme row
+        self.render_string(buf, buf_width, row_x, row_y, "Theme", self.theme.fg);
+        // Theme value as clickable pill
+        let theme_pill_x = value_x;
+        let theme_pill_w = self.theme.name.len() * self.cell_width + 16;
+        let theme_pill_h = self.cell_height + 8;
+        let theme_pill_y = row_y.saturating_sub(4);
+        Self::fill_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, Color::rgba(self.theme.cursor.r, self.theme.cursor.g, self.theme.cursor.b, 50));
+        Self::stroke_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, 1, self.theme.cursor);
+        self.render_string(buf, buf_width, theme_pill_x + 8, row_y, self.theme.name, self.theme.cursor);
+        row_y += row_spacing;
+
+        // Font Size row
+        self.render_string(buf, buf_width, row_x, row_y, "Font Size", self.theme.fg);
+        let size_str = format!("{:.0}pt", config.font_size);
+        self.render_string(buf, buf_width, value_x + 30, row_y, &size_str, self.theme.fg);
+        // - button
+        Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+        self.render_string(buf, buf_width, value_x + 6, row_y, "-", self.theme.fg);
+        // + button
+        let plus_x = value_x + 30 + size_str.len() * self.cell_width + 8;
+        Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+        self.render_string(buf, buf_width, plus_x + 6, row_y, "+", self.theme.fg);
+        row_y += row_spacing;
+
+        // Transparency row
+        self.render_string(buf, buf_width, row_x, row_y, "Transparency", self.theme.fg);
+        let trans_label = if config.transparent { "On" } else { "Off" };
+        let trans_color = if config.transparent { self.theme.ansi[2] } else { self.theme.ansi[1] };
+        self.render_string(buf, buf_width, value_x, row_y, trans_label, trans_color);
+        row_y += row_spacing;
+
+        // Opacity row (only when transparency is on)
+        if config.transparent {
+            self.render_string(buf, buf_width, row_x, row_y, "Opacity", self.theme.fg);
+            let opacity_str = format!("{:.0}%", config.opacity * 100.0);
+            self.render_string(buf, buf_width, value_x + 30, row_y, &opacity_str, self.theme.fg);
+            // - button
+            Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+            self.render_string(buf, buf_width, value_x + 6, row_y, "-", self.theme.fg);
+            // + button
+            let plus_x = value_x + 30 + opacity_str.len() * self.cell_width + 8;
+            Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+            self.render_string(buf, buf_width, plus_x + 6, row_y, "+", self.theme.fg);
+            row_y += row_spacing;
+        }
+
+        // Reinstall Shortcuts button
+        let btn_text = "Reinstall Shortcuts";
+        let btn_w = btn_text.len() * self.cell_width + 24;
+        let btn_h = self.cell_height + 12;
+        let btn_x = row_x;
+        let btn_y = row_y;
+        Self::fill_rounded_rect(buf, buf_width, btn_x, btn_y, btn_w, btn_h, 6, self.theme.window_border);
+        Self::stroke_rounded_rect(buf, buf_width, btn_x, btn_y, btn_w, btn_h, 6, 1, self.theme.fg);
+        self.render_string(buf, buf_width, btn_x + 12, btn_y + 6, btn_text, self.theme.fg);
+
+        // Hint at bottom
+        let hint = "Press Escape to close";
+        let hint_y = panel_y + panel_h - self.cell_height - 12;
+        let hint_color = Color::rgba(self.theme.fg.r, self.theme.fg.g, self.theme.fg.b, 100);
+        self.render_string(buf, buf_width, panel_x + 20, hint_y, hint, hint_color);
+    }
+
+    /// Get settings panel bounds for hit testing
+    pub fn settings_panel_bounds(&self, buf_width: usize, buf_height: usize) -> (usize, usize, usize, usize) {
+        let panel_w = 420usize;
+        let panel_h = 320usize;
+        let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
+        let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
+        (panel_x, panel_y, panel_w, panel_h)
+    }
+
+    // -----------------------------------------------------------------------
+    // Window corner masking — "cookie cutter" transparent corners
+    // -----------------------------------------------------------------------
+
+    /// Mask off pixels outside the rounded window boundary to transparent.
+    /// Called after each full render pass to create rounded window corners.
+    pub fn mask_window_corners(buf: &mut [u32], width: usize, height: usize) {
+        let r = WINDOW_CORNER_RADIUS;
+        if r == 0 || width == 0 || height == 0 {
+            return;
+        }
+        let r = r.min(width / 2).min(height / 2);
+
+        for row in 0..r {
+            let dy = r - row;
+            let dx = r - isqrt(r * r - dy * dy);
+            // Top-left corner
+            let start = row * width;
+            for col in 0..dx {
+                if start + col < buf.len() {
+                    buf[start + col] = 0x00000000;
+                }
+            }
+            // Top-right corner
+            for col in (width - dx)..width {
+                if start + col < buf.len() {
+                    buf[start + col] = 0x00000000;
+                }
+            }
+        }
+
+        for row in (height - r)..height {
+            let dy = row - (height - r);
+            let dx = r - isqrt(r * r - dy * dy);
+            let start = row * width;
+            // Bottom-left corner
+            for col in 0..dx {
+                if start + col < buf.len() {
+                    buf[start + col] = 0x00000000;
+                }
+            }
+            // Bottom-right corner
+            for col in (width - dx)..width {
+                if start + col < buf.len() {
+                    buf[start + col] = 0x00000000;
                 }
             }
         }

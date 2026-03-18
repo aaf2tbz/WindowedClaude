@@ -15,6 +15,13 @@ fn main() -> Result<()> {
 
     // Parse CLI args
     let args: Vec<String> = std::env::args().collect();
+
+    // Handle --uninstall
+    if args.iter().any(|a| a == "--uninstall") {
+        info!("Uninstall mode requested");
+        return installer::uninstall::run_uninstall();
+    }
+
     let auto_accept = args.iter().any(|a| a == "--auto-accept");
 
     if auto_accept {
