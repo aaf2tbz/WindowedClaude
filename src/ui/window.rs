@@ -114,9 +114,14 @@ impl App {
             .unwrap_or_else(installer::git_bash_path);
         let claude_cli = installer::claude_cli_path();
 
-        match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept) {
+        // Get terminal grid size from renderer
+        let (cols, rows) = self.renderer.as_ref()
+            .map(|r| (r.cols as u16, r.rows as u16))
+            .unwrap_or((120, 35));
+
+        match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
             Ok(session) => {
-                info!("PTY session spawned");
+                info!("PTY session spawned ({}x{})", cols, rows);
                 self.pty = Some(session);
             }
             Err(e) => {
@@ -164,8 +169,13 @@ impl App {
         let theme = self.current_theme().clone();
         let mut renderer = Renderer::new(theme, self.config.font_size);
         renderer.resize(self.width, self.height);
+        let cols = renderer.cols;
+        let rows = renderer.rows;
         if let Some(terminal) = &mut self.terminal {
-            terminal.resize(renderer.cols, renderer.rows);
+            terminal.resize(cols, rows);
+        }
+        if let Some(pty) = &self.pty {
+            pty.resize(cols as u16, rows as u16);
         }
         self.renderer = Some(renderer);
         self.request_redraw();
@@ -348,8 +358,14 @@ impl ApplicationHandler for App {
                 }
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(self.width, self.height);
+                    let cols = renderer.cols;
+                    let rows = renderer.rows;
                     if let Some(terminal) = &mut self.terminal {
-                        terminal.resize(renderer.cols, renderer.rows);
+                        terminal.resize(cols, rows);
+                    }
+                    // Notify PTY of new size so Claude redraws
+                    if let Some(pty) = &self.pty {
+                        pty.resize(cols as u16, rows as u16);
                     }
                 }
                 self.request_redraw();

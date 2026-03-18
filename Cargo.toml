@@ -19,6 +19,9 @@ alacritty_terminal = "0.25"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
+# Real PTY (ConPTY on Windows, pty on Unix)
+portable-pty = "0.8"
+
 # Clipboard
 arboard = "3"
 
