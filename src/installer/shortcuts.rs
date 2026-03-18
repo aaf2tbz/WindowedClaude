@@ -209,6 +209,9 @@ pub fn register_context_menu() -> Result<()> {
         exe_name
     );
 
+    // Escape single quotes for PowerShell string literals (double them)
+    let reg_base_escaped = reg_base.replace('\'', "''");
+    let exe_escaped = exe_str.replace('\'', "''");
     let ps_script = format!(
         r#"
         New-Item -Path '{reg_base}' -Force | Out-Null
@@ -217,8 +220,8 @@ pub fn register_context_menu() -> Result<()> {
         New-Item -Path '{reg_base}\command' -Force | Out-Null
         Set-ItemProperty -Path '{reg_base}\command' -Name '(Default)' -Value '"{exe}" --auto-accept'
         "#,
-        reg_base = reg_base,
-        exe = exe_str,
+        reg_base = reg_base_escaped,
+        exe = exe_escaped,
     );
 
     let output = std::process::Command::new("powershell")
@@ -287,13 +290,18 @@ fn create_lnk(
 ) -> Result<()> {
     let lnk_str = lnk_path.to_string_lossy();
 
+    // Escape single quotes for PowerShell string literals (double them)
+    let lnk_escaped = lnk_str.replace('\'', "''");
+    let target_escaped = target.replace('\'', "''");
+    let args_escaped = arguments.replace('\'', "''");
+    let desc_escaped = description.replace('\'', "''");
     // Set IconLocation to the exe itself so the shortcut inherits the app icon
     let ps_script = format!(
         r#"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{lnk}'); $s.TargetPath = '{target}'; $s.Arguments = '{args}'; $s.Description = '{desc}'; $s.IconLocation = '{target},0'; $s.Save()"#,
-        lnk = lnk_str,
-        target = target,
-        args = arguments,
-        desc = description,
+        lnk = lnk_escaped,
+        target = target_escaped,
+        args = args_escaped,
+        desc = desc_escaped,
     );
 
     let output = std::process::Command::new("powershell")

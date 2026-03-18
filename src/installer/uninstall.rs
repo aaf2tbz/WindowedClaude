@@ -74,9 +74,10 @@ fn remove_context_menu() {
         exe_name
     );
 
+    let reg_path_escaped = reg_path.replace('\'', "''");
     let ps_script = format!(
         r#"Remove-Item -Path '{}' -Recurse -Force -ErrorAction SilentlyContinue"#,
-        reg_path
+        reg_path_escaped
     );
 
     let _ = std::process::Command::new("powershell")
@@ -168,15 +169,12 @@ fn self_delete() {
         return;
     }
 
-    // Use cmd /c with ping delay trick to delete after we exit
+    // Use cmd /c with ping delay trick to delete after we exit.
+    // Pass exe path via environment variable to avoid cmd.exe injection.
     if let Ok(exe) = std::env::current_exe() {
-        let exe_str = exe.to_string_lossy();
-        let cmd = format!(
-            r#"/c ping 127.0.0.1 -n 3 > nul & del /f /q "{}" "#,
-            exe_str
-        );
         let _ = std::process::Command::new("cmd")
-            .args([&cmd])
+            .args(["/c", "ping 127.0.0.1 -n 3 > nul & del /f /q \"%WCLAUDE_EXE%\""])
+            .env("WCLAUDE_EXE", &exe)
             .spawn();
         info!("Scheduled self-delete");
     }
@@ -190,21 +188,21 @@ pub fn register_arp() {
     }
 
     let exe_path = std::env::current_exe().unwrap_or_default();
-    let exe_str = exe_path.to_string_lossy();
+    let exe_escaped = exe_path.to_string_lossy().replace('\'', "''");
 
     let ps_script = format!(
         r#"
         $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WindowedClaude'
         New-Item -Path $key -Force | Out-Null
         Set-ItemProperty -Path $key -Name 'DisplayName' -Value 'WindowedClaude'
-        Set-ItemProperty -Path $key -Name 'DisplayVersion' -Value '1.0.3'
+        Set-ItemProperty -Path $key -Name 'DisplayVersion' -Value '1.2.2'
         Set-ItemProperty -Path $key -Name 'Publisher' -Value 'WindowedClaude'
         Set-ItemProperty -Path $key -Name 'UninstallString' -Value '"{exe}" --uninstall'
         Set-ItemProperty -Path $key -Name 'DisplayIcon' -Value '"{exe}"'
         Set-ItemProperty -Path $key -Name 'NoModify' -Value 1 -Type DWord
         Set-ItemProperty -Path $key -Name 'NoRepair' -Value 1 -Type DWord
         "#,
-        exe = exe_str,
+        exe = exe_escaped,
     );
 
     let _ = std::process::Command::new("powershell")

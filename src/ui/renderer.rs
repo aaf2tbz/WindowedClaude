@@ -693,7 +693,7 @@ impl Renderer {
         }
 
         // 4. Read terminal state and render cells
-        let term = terminal.term.lock().unwrap();
+        let term = terminal.term.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let content = term.renderable_content();
 
         let cursor_point = content.cursor.point;
