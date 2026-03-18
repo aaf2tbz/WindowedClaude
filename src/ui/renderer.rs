@@ -14,9 +14,29 @@ struct GlyphBitmap {
     y_offset: i32,
 }
 
+/// Hit zone for the theme selector pill in the title bar
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ThemePillBounds {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+}
+
+impl ThemePillBounds {
+    pub fn contains(&self, px: f64, py: f64) -> bool {
+        px >= self.x as f64
+            && px <= (self.x + self.w) as f64
+            && py >= self.y as f64
+            && py <= (self.y + self.h) as f64
+    }
+}
+
 /// Software renderer — draws terminal cells into a pixel buffer via fontdue.
 pub struct Renderer {
     pub theme: Theme,
+    /// Bounds of the theme pill in the title bar (for click detection)
+    pub theme_pill: ThemePillBounds,
     pub cell_width: usize,
     pub cell_height: usize,
     pub cols: usize,
@@ -57,6 +77,7 @@ impl Renderer {
 
         Self {
             theme,
+            theme_pill: ThemePillBounds::default(),
             cell_width,
             cell_height,
             cols: 120,
@@ -183,6 +204,129 @@ impl Renderer {
         }
     }
 
+    /// Fill a rounded rectangle. Radius applies to all four corners.
+    fn fill_rounded_rect(
+        buf: &mut [u32],
+        stride: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        r: usize,
+        c: Color,
+    ) {
+        let packed = pack_color(c);
+        let max_y = buf.len() / stride.max(1);
+        let r = r.min(w / 2).min(h / 2); // Clamp radius
+
+        for row in 0..h {
+            let py = y + row;
+            if py >= max_y {
+                break;
+            }
+
+            // Calculate horizontal inset for this row based on corner radius
+            let inset = if row < r {
+                // Top corners
+                let dy = r - row;
+                r - isqrt(r * r - dy * dy)
+            } else if row >= h - r {
+                // Bottom corners
+                let dy = row - (h - r);
+                r - isqrt(r * r - dy * dy)
+            } else {
+                0
+            };
+
+            let start = (py * stride + x + inset).min(buf.len());
+            let end = (py * stride + x + w - inset).min(py * stride + stride).min(buf.len());
+            if start < end {
+                buf[start..end].fill(packed);
+            }
+        }
+    }
+
+    /// Draw the outline of a rounded rect (border only, no fill).
+    /// Draws by filling the border region between outer and inner rounded rects.
+    fn stroke_rounded_rect(
+        buf: &mut [u32],
+        stride: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        r: usize,
+        thickness: usize,
+        c: Color,
+    ) {
+        let packed = pack_color(c);
+        let max_y = buf.len() / stride.max(1);
+        let r = r.min(w / 2).min(h / 2);
+        let inner_r = r.saturating_sub(thickness);
+
+        for row in 0..h {
+            let py = y + row;
+            if py >= max_y {
+                break;
+            }
+
+            // Outer inset
+            let outer_inset = if row < r {
+                let dy = r - row;
+                r - isqrt(r * r - dy * dy)
+            } else if row >= h - r {
+                let dy = row - (h - r);
+                r - isqrt(r * r - dy * dy)
+            } else {
+                0
+            };
+
+            // Inner inset (for the hollow interior)
+            let in_top_border = row < thickness;
+            let in_bottom_border = row >= h - thickness;
+
+            if in_top_border || in_bottom_border {
+                // Full row is border
+                let start = (py * stride + x + outer_inset).min(buf.len());
+                let end = (py * stride + x + w - outer_inset).min(py * stride + stride).min(buf.len());
+                if start < end {
+                    buf[start..end].fill(packed);
+                }
+            } else {
+                // Left border strip
+                let inner_inset = if row < r {
+                    let dy = inner_r as isize - (row as isize - thickness as isize);
+                    if dy > 0 {
+                        inner_r - isqrt(inner_r * inner_r - (dy as usize) * (dy as usize))
+                    } else {
+                        0
+                    }
+                } else if row >= h - r {
+                    let dy = (row + thickness) as isize - (h - inner_r) as isize;
+                    if dy > 0 {
+                        inner_r - isqrt(inner_r * inner_r - (dy as usize) * (dy as usize))
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                let left_start = (py * stride + x + outer_inset).min(buf.len());
+                let left_end = (py * stride + x + thickness + inner_inset).min(buf.len());
+                if left_start < left_end {
+                    buf[left_start..left_end].fill(packed);
+                }
+
+                let right_start = (py * stride + x + w - thickness - inner_inset).min(buf.len());
+                let right_end = (py * stride + x + w - outer_inset).min(py * stride + stride).min(buf.len());
+                if right_start < right_end {
+                    buf[right_start..right_end].fill(packed);
+                }
+            }
+        }
+    }
+
     fn draw_glyph_at(
         buf: &mut [u32],
         stride: usize,
@@ -231,22 +375,63 @@ impl Renderer {
         let bg = self.theme.title_bar_bg_with_opacity(opacity);
         Self::fill_rect(buf, stride, 0, 0, stride, self.title_bar_height, bg);
 
-        // Title text
-        let title = format!("WindowedClaude  —  {}", self.theme.name);
+        // Title text (left side)
+        let title = "WindowedClaude";
         let text_y = (self.title_bar_height.saturating_sub(self.cell_height)) / 2;
-        self.render_string(buf, stride, 14, text_y, &title, self.theme.title_bar_text);
+        self.render_string(buf, stride, 14, text_y, title, self.theme.title_bar_text);
 
-        // Window buttons (right side)
+        // Theme selector pill (center-ish, after title)
+        let pill_text = self.theme.name;
+        let pill_char_count = pill_text.len();
+        let pill_text_w = pill_char_count * self.cell_width;
+        let pill_pad_h = 6; // Horizontal padding inside pill
+        let pill_pad_v = 4; // Vertical padding inside pill
+        let pill_w = pill_text_w + pill_pad_h * 2;
+        let pill_h = self.cell_height + pill_pad_v * 2;
+        let pill_x = 14 + title.len() * self.cell_width + 16; // After title + gap
+        let pill_y = (self.title_bar_height.saturating_sub(pill_h)) / 2;
+
+        // Draw pill background (accent color, semi-transparent)
+        let pill_bg = Color::rgba(
+            self.theme.cursor.r,
+            self.theme.cursor.g,
+            self.theme.cursor.b,
+            50,
+        );
+        Self::fill_rounded_rect(buf, stride, pill_x, pill_y, pill_w, pill_h, pill_h / 2, pill_bg);
+
+        // Draw pill border
+        Self::stroke_rounded_rect(
+            buf, stride, pill_x, pill_y, pill_w, pill_h,
+            pill_h / 2, 1, self.theme.cursor,
+        );
+
+        // Draw pill text
+        self.render_string(
+            buf, stride,
+            pill_x + pill_pad_h, pill_y + pill_pad_v,
+            pill_text, self.theme.cursor,
+        );
+
+        // Store pill bounds for click detection
+        self.theme_pill = ThemePillBounds {
+            x: pill_x,
+            y: pill_y,
+            w: pill_w,
+            h: pill_h,
+        };
+
+        // Window buttons (right side — traffic light dots)
         let dot_r = 6usize;
         let btn_y = self.title_bar_height / 2;
         let right = stride.saturating_sub(20);
 
-        // Close (red dot)
-        Self::fill_rect(buf, stride, right.saturating_sub(dot_r), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, Color::rgb(220, 80, 80));
-        // Maximize (yellow dot)
-        Self::fill_rect(buf, stride, right.saturating_sub(dot_r + 28), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, Color::rgb(220, 190, 60));
-        // Minimize (green dot)
-        Self::fill_rect(buf, stride, right.saturating_sub(dot_r + 56), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, Color::rgb(80, 200, 80));
+        // Close (red)
+        Self::fill_rounded_rect(buf, stride, right.saturating_sub(dot_r), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, dot_r, Color::rgb(220, 80, 80));
+        // Maximize (yellow)
+        Self::fill_rounded_rect(buf, stride, right.saturating_sub(dot_r + 28), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, dot_r, Color::rgb(220, 190, 60));
+        // Minimize (green)
+        Self::fill_rounded_rect(buf, stride, right.saturating_sub(dot_r + 56), btn_y.saturating_sub(dot_r), dot_r * 2, dot_r * 2, dot_r, Color::rgb(80, 200, 80));
     }
 
     /// Render a string at pixel coordinates
@@ -352,30 +537,25 @@ impl Renderer {
         // 2. Title bar
         self.render_title_bar(buf, buf_width, opacity);
 
-        // 3. Padding border — draw the window_border color in the padding area
+        // 3. Padding frame with rounded corners
+        //    Strategy: fill the padding zone with border color, then punch out
+        //    the terminal grid area as a rounded rect with the bg color.
         let border_color = self.theme.window_border;
         let gx = self.grid_x();
         let gy = self.grid_y();
         let grid_w = self.cols * self.cell_width;
         let grid_h = self.rows * self.cell_height;
+        let corner_radius: usize = 10;
 
-        // Top padding strip (between title bar and grid)
-        if self.pad_top > 0 {
-            Self::fill_rect(buf, buf_width, 0, self.title_bar_height, buf_width, self.pad_top, border_color);
-        }
-        // Bottom padding strip (below grid)
-        let grid_bottom = gy + grid_h;
-        if grid_bottom < buf_height {
-            Self::fill_rect(buf, buf_width, 0, grid_bottom, buf_width, buf_height - grid_bottom, border_color);
-        }
-        // Left padding strip
-        if self.pad_left > 0 {
-            Self::fill_rect(buf, buf_width, 0, gy, self.pad_left, grid_h, border_color);
-        }
-        // Right padding strip (after grid to window edge)
-        let grid_right = gx + grid_w;
-        if grid_right < buf_width {
-            Self::fill_rect(buf, buf_width, grid_right, gy, buf_width - grid_right, grid_h, border_color);
+        // Fill entire area below title bar with border color
+        Self::fill_rect(buf, buf_width, 0, self.title_bar_height, buf_width,
+            buf_height.saturating_sub(self.title_bar_height), border_color);
+
+        // Punch out the terminal grid area as a rounded rect with bg color
+        // This leaves the border color visible in the padding + rounded corners
+        let term_bg = self.theme.bg_with_opacity(opacity);
+        if grid_w > 0 && grid_h > 0 {
+            Self::fill_rounded_rect(buf, buf_width, gx, gy, grid_w, grid_h, corner_radius, term_bg);
         }
 
         // 4. Read terminal state and render cells
@@ -556,4 +736,18 @@ fn ansi256_to_rgb(idx: u8) -> Color {
         let v = 8 + (idx - 232) * 10;
         Color::rgb(v, v, v)
     }
+}
+
+/// Integer square root (floor)
+fn isqrt(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
 }

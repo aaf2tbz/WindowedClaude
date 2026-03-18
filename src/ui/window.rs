@@ -223,6 +223,12 @@ impl App {
         if x >= min_x - BTN_SIZE && x <= min_x + BTN_SIZE {
             return Some(TitleBarButton::Minimize);
         }
+        // Theme pill
+        if let Some(renderer) = &self.renderer {
+            if renderer.theme_pill.contains(x, y) {
+                return Some(TitleBarButton::ThemePill);
+            }
+        }
         None
     }
 }
@@ -232,6 +238,7 @@ enum TitleBarButton {
     Close,
     Maximize,
     Minimize,
+    ThemePill,
 }
 
 impl ApplicationHandler for App {
@@ -377,6 +384,17 @@ impl ApplicationHandler for App {
                                     if let Some(window) = &self.window {
                                         window.set_minimized(true);
                                     }
+                                    return;
+                                }
+                                Some(TitleBarButton::ThemePill) => {
+                                    self.config.cycle_theme();
+                                    let new_theme = self.current_theme().clone();
+                                    if let Some(renderer) = &mut self.renderer {
+                                        renderer.theme = new_theme;
+                                    }
+                                    self.update_title();
+                                    self.request_redraw();
+                                    info!("Theme (pill): {}", self.config.theme_id);
                                     return;
                                 }
                                 None => {
