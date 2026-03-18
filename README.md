@@ -10,16 +10,20 @@ Built in Rust. Lightweight. Themed. Fast.
 
 WindowedClaude is a themed terminal window that:
 
-- **Downloads and installs everything** on first run (Git for Windows + Claude CLI)
-- **Creates shortcuts** (Start Menu automatically, Desktop optionally)
-- **Hosts Claude Code** inside a custom-rendered terminal with real VT100 emulation
-- **Offers 8 polished themes** with full ANSI color palettes
-- **Multi-tab support** — run multiple Claude sessions side by side
-- **Settings panel** — change theme, font size, transparency, and reinstall shortcuts
-- **Fully rounded window corners** for a modern look
-- **Supports transparency** so you can see through the window while working
-- **Adds a right-click option** to run Claude with `--dangerously-skip-permissions`
-- **Clean uninstall** — `--uninstall` flag removes all traces (shortcuts, registry, data)
+- **One-click install** — downloads Git for Windows + Claude CLI automatically on first run
+- **Multi-tab terminal** — run multiple Claude sessions side by side (`Ctrl+N`)
+- **8 polished themes** — full ANSI 16-color palettes with canonical color values
+- **Settings panel** — in-app GUI to change theme, font size, transparency, and reinstall shortcuts
+- **Interactive hover & click feedback** — settings buttons highlight on hover and flash on click
+- **Fully rounded window corners** — 12px transparent pixel masking for a modern look
+- **Window transparency** — adjustable opacity so you can see through while working
+- **Auto-accept mode** — dedicated Desktop + Start Menu shortcuts to run with `--dangerously-skip-permissions`
+- **Shortcut icons** — all `.lnk` shortcuts show the WindowedClaude app icon
+- **Clean uninstall** — `--uninstall` removes all traces (shortcuts, registry, data, self-deletes)
+- **Add/Remove Programs** — registered in Windows Settings > Apps for easy discovery
+- **Code signing ready** — self-signed cert script reduces SmartScreen warnings
+- **Windows app manifest** — proper DPI awareness, UAC level, and OS compatibility declarations
+- **Cross-platform** — runs on Windows (ConPTY) and macOS (Unix PTY)
 
 No terminal experience needed. No admin rights needed.
 
@@ -30,7 +34,7 @@ No terminal experience needed. No admin rights needed.
 ### Option 1: Download the Release
 
 1. Go to [Releases](https://github.com/aaf2tbz/WindowedClaude/releases)
-2. Download `windowed-claude.exe`
+2. Download `windowed-claude.exe` (Windows) or `WindowedClaude-macos` (macOS ARM64)
 3. Double-click it
 4. Done
 
@@ -49,6 +53,13 @@ cargo build --release
 .\target\release\windowed-claude.exe  # Windows
 ```
 
+### Cross-compile for Windows from macOS/Linux
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
 ### Sign the Exe (Optional — Reduces SmartScreen Warnings)
 
 ```powershell
@@ -56,21 +67,13 @@ cargo build --release
 .\scripts\sign.ps1
 ```
 
-Creates a self-signed code signing certificate and signs the exe with SHA256 + timestamp. The publisher will show "WindowedClaude" instead of "Unknown" in Windows dialogs.
-
-### Cross-compile for Windows from macOS/Linux
-
-```bash
-# Install the Windows target
-rustup target add x86_64-pc-windows-msvc
-
-# Build (requires cross or a Windows SDK)
-cargo build --release --target x86_64-pc-windows-msvc
-```
+Creates a self-signed code signing certificate and signs the exe with SHA256 + DigiCert timestamp. The publisher shows "WindowedClaude" instead of "Unknown" in Windows dialogs.
 
 ---
 
 ## Keyboard Shortcuts
+
+### Tabs
 
 | Shortcut | Action |
 |----------|--------|
@@ -79,42 +82,27 @@ cargo build --release --target x86_64-pc-windows-msvc
 | `Ctrl+Tab` | Next tab |
 | `Ctrl+Shift+Tab` | Previous tab |
 | `Ctrl+1-9` | Jump to tab by number |
+
+### Window & Display
+
+| Shortcut | Action |
+|----------|--------|
 | `Ctrl+Shift+O` | Toggle window transparency |
 | `Ctrl+Shift+=` | Increase opacity |
 | `Ctrl+Shift+-` | Decrease opacity |
-| `Ctrl+Shift+C` | Copy selected text |
-| `Ctrl+Shift+V` | Paste from clipboard |
 | `Ctrl+=` | Increase font size |
 | `Ctrl+-` | Decrease font size |
 | `Ctrl+0` | Reset font size to default (14pt) |
 | `Escape` | Close settings panel |
 
-You can also click the **theme pill** or **settings pill** in the title bar.
+### Clipboard
 
----
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+C` | Copy selected text |
+| `Ctrl+Shift+V` | Paste from clipboard (bracket paste mode) |
 
-## Themes
-
-8 built-in themes, each with full ANSI 16-color palettes:
-
-| Theme | Style |
-|-------|-------|
-| **Claude Dark** | Default. Warm amber accent on near-black |
-| **Claude Light** | Clean light background with warm tones |
-| **Midnight** | Deep blue-black with bright, high-contrast accents |
-| **Solarized Dark** | Canonical Ethan Schoonover palette |
-| **Dracula** | Purple-tinted dark theme with proper blue/purple distinction |
-| **Nord** | Arctic blue-grey with differentiated bright colors |
-| **Monokai Pro** | Warm dark with vivid, distinct syntax colors |
-| **Gruvbox Dark** | Retro groove with refined earthy tones |
-
-All themes include:
-- Custom title bar colors
-- Terminal background + foreground
-- Cursor accent color
-- Selection highlight
-- Window border/padding color
-- Full ANSI 16-color mapping (canonical values)
+You can also click the **theme pill** to cycle themes or **settings pill** to open the settings panel — both in the title bar.
 
 ---
 
@@ -122,36 +110,67 @@ All themes include:
 
 Open multiple Claude sessions in one window:
 
-- **New tab**: `Ctrl+N`
-- **Close tab**: `Ctrl+W` (closing the last tab closes the window)
-- **Switch tabs**: Click on a tab, `Ctrl+Tab`, or `Ctrl+1-9`
+- **New tab**: `Ctrl+N` — spawns a new Claude instance in its own PTY
+- **Close tab**: `Ctrl+W` — closing the last tab closes the window
+- **Switch tabs**: Click a tab, `Ctrl+Tab` / `Ctrl+Shift+Tab`, or `Ctrl+1-9`
 - Tab bar appears automatically when you have 2+ tabs
-- Each tab gets its own independent PTY session
-- All tabs drain output every frame (no memory buildup in background tabs)
+- Active tab highlighted with cursor accent color + bottom accent line
+- Each tab has an X close button
+- All tabs drain PTY output every frame (no memory buildup in background tabs)
+- Window resize propagates to all tabs
 
 ---
 
 ## Settings Panel
 
-Click the **Settings** pill in the title bar (or press Escape to close):
+Click the **Settings** pill in the title bar to open. Press `Escape`, click `X`, or click outside to close.
 
-- **Theme** — click to cycle through all 8 themes
-- **Font Size** — +/- buttons (8pt to 48pt)
-- **Transparency** — toggle on/off
-- **Opacity** — +/- when transparency is on
-- **Reinstall Shortcuts** — recreate Desktop + Start Menu shortcuts
+All interactive elements have **hover highlighting** (accent color background) and **click flash feedback** so you know your click registered.
+
+| Setting | Control | Description |
+|---------|---------|-------------|
+| **Theme** | Click pill to cycle | Cycles through all 8 built-in themes |
+| **Font Size** | `-` / `+` buttons | Range: 8pt to 48pt, persisted to config |
+| **Transparency** | Click to toggle | Enables/disables window transparency |
+| **Opacity** | `-` / `+` buttons | 5% to 100%, only visible when transparency is on |
+| **Reinstall Shortcuts** | Click button | Recreates Desktop + Start Menu shortcuts with icons |
+
+---
+
+## Themes
+
+8 built-in themes, each with full ANSI 16-color palettes using canonical color values:
+
+| Theme | Style |
+|-------|-------|
+| **Claude Dark** | Default. Warm amber accent on near-black |
+| **Claude Light** | Clean light background with warm tones |
+| **Midnight** | Deep blue-black with bright, high-contrast accents |
+| **Solarized Dark** | Canonical Ethan Schoonover palette (proper bright color mapping) |
+| **Dracula** | Purple-tinted dark theme with proper blue/purple distinction |
+| **Nord** | Arctic blue-grey with differentiated bright variants |
+| **Monokai Pro** | Warm dark with vivid, distinct blue vs cyan |
+| **Gruvbox Dark** | Retro groove with refined earthy tones (bg4 bright black) |
+
+Each theme defines:
+- Custom title bar background + text color
+- Terminal background + foreground
+- Cursor accent color (used for UI highlights throughout)
+- Selection highlight (background + foreground)
+- Window border/padding color (distinct from background for depth)
+- Full ANSI 16-color palette (8 normal + 8 bright, all canonical)
 
 ---
 
 ## Auto-Accept Mode
 
-Right-click the app (or shortcut) and select **"Run with Auto-Accept"** to launch Claude with `--dangerously-skip-permissions`. This skips the permission prompts for every tool call.
+Launch Claude with `--dangerously-skip-permissions` to skip permission prompts for every tool call.
 
-You can also run it from the command line:
+**Three ways to use it:**
 
-```bash
-windowed-claude --auto-accept
-```
+1. **Desktop shortcut**: "WindowedClaude (Auto-Accept)" — created automatically with Desktop shortcuts
+2. **Start Menu shortcut**: "WindowedClaude (Auto-Accept)" — always created on install
+3. **Command line**: `windowed-claude --auto-accept`
 
 The title bar shows `| AUTO` when running in this mode.
 
@@ -166,29 +185,33 @@ windowed-claude --uninstall
 ```
 
 This removes:
-- Desktop and Start Menu shortcuts
-- Right-click context menu entries
+- Desktop shortcuts (main + auto-accept)
+- Start Menu shortcuts (main + auto-accept)
+- Right-click context menu registry entries
 - Add/Remove Programs registry entry
-- Configuration and data directories
-- Claude CLI (only if WindowedClaude installed it)
-- Git for Windows (only if WindowedClaude installed it)
-- The exe itself (delayed self-delete)
+- Configuration directory (`%APPDATA%\windowed-claude\`)
+- Data directory (`%LOCALAPPDATA%\windowed-claude\`)
+- Claude CLI — only if WindowedClaude installed it (checked via marker file)
+- Git for Windows — only if WindowedClaude installed it (checked via marker file)
+- The exe itself (delayed self-delete via `cmd /c`)
 
-WindowedClaude also registers with **Add/Remove Programs** during install, so you can find it in Windows Settings > Apps.
+WindowedClaude registers with **Add/Remove Programs** during install, so you can also find it in Windows Settings > Apps > Installed apps.
 
 ---
 
 ## Window Features
 
-- **Fully rounded corners** (12px radius, transparent masking)
-- **Custom title bar** with drag-to-move
-- **Traffic light buttons** (close, maximize, minimize)
-- **Theme pill** + **Settings pill** in title bar
-- **Edge resize** (drag any edge or corner to resize)
-- **Themed padding** (border color matches theme)
-- **Mouse text selection** (click and drag to select, Ctrl+Shift+C to copy)
-- **Scroll** (mouse wheel scrolls terminal history)
-- **Transparency** (toggle with Ctrl+Shift+O, adjust with Ctrl+Shift+=/-)
+- **Fully rounded corners** — 12px radius, transparent pixel masking on every frame
+- **Custom title bar** — drag to move the window, double-click to maximize
+- **Traffic light buttons** — close (red), maximize (yellow), minimize (green)
+- **Theme pill** — click to cycle themes, shows current theme name
+- **Settings pill** — click to open/close the settings overlay
+- **Edge resize** — drag any edge or corner (5px detection zone)
+- **Themed padding frame** — border color distinct from background for visual depth
+- **Mouse text selection** — click and drag in terminal area to select text
+- **Scrollback** — mouse wheel scrolls terminal history
+- **Transparency** — window background becomes see-through, content remains readable
+- **No decorations** — custom window chrome, no OS title bar
 
 ---
 
@@ -196,13 +219,16 @@ WindowedClaude also registers with **Add/Remove Programs** during install, so yo
 
 On the very first launch, WindowedClaude:
 
-1. Downloads **Git for Windows** from GitHub
-2. Installs **Claude Code CLI** via the official installer
-3. Creates a **Start Menu shortcut**
-4. Registers the **right-click context menu** option
-5. Registers with **Add/Remove Programs**
-6. Shows a **welcome screen** asking if you want a Desktop shortcut
-7. Launches Claude
+1. Opens the window immediately with a progress screen
+2. Downloads **Git for Windows** (~50MB) from GitHub releases
+3. Installs Git silently (`/VERYSILENT /NORESTART`)
+4. Installs **Claude Code CLI** via PowerShell (`irm https://claude.ai/install.ps1 | iex`)
+5. Creates **Start Menu shortcuts** (main + auto-accept)
+6. Registers the **right-click context menu** ("Run with Auto-Accept")
+7. Registers with **Add/Remove Programs**
+8. Tracks what it installed (marker files for clean uninstall)
+9. Shows a **welcome screen** asking if you want Desktop shortcuts
+10. Spawns Claude in a real ConPTY terminal
 
 Subsequent launches skip straight to Claude (< 1 second).
 
@@ -210,7 +236,8 @@ Subsequent launches skip straight to Claude (< 1 second).
 
 ## Configuration
 
-Settings are persisted to:
+Settings are automatically persisted to disk and loaded on startup:
+
 - **Windows**: `%APPDATA%\windowed-claude\config.json`
 - **macOS**: `~/Library/Application Support/windowed-claude/config.json`
 
@@ -225,50 +252,60 @@ Settings are persisted to:
 }
 ```
 
-| Setting | Description |
-|---------|-------------|
-| `font_size` | Font size in points (8-48) |
-| `font_family` | Font name (currently JetBrains Mono embedded) |
-| `theme_id` | One of: `claude-dark`, `claude-light`, `midnight`, `solarized-dark`, `dracula`, `nord`, `monokai`, `gruvbox` |
-| `opacity` | Window opacity 0.05 - 1.0 (only applies when `transparent` is true) |
-| `transparent` | Enable window transparency |
-| `git_bash_path` | Override path to Git Bash (null = auto-detect) |
+| Setting | Range | Description |
+|---------|-------|-------------|
+| `font_size` | 8.0 - 48.0 | Font size in points |
+| `font_family` | — | Font name (JetBrains Mono embedded, not configurable yet) |
+| `theme_id` | See themes | `claude-dark`, `claude-light`, `midnight`, `solarized-dark`, `dracula`, `nord`, `monokai`, `gruvbox` |
+| `opacity` | 0.05 - 1.0 | Window opacity (only applies when `transparent` is true) |
+| `transparent` | true/false | Enable window transparency |
+| `git_bash_path` | path or null | Override Git Bash path (null = auto-detect standard locations + PATH) |
+
+All settings can be changed via the Settings panel or keyboard shortcuts and are saved immediately.
 
 ---
 
 ## Code Signing
 
-WindowedClaude includes a self-signed code signing script to reduce Windows SmartScreen warnings:
+WindowedClaude includes a PowerShell script to sign the exe with a self-signed certificate:
 
 ```powershell
-# Build release
 cargo build --release
-
-# Sign the exe
 .\scripts\sign.ps1
 ```
 
-The script:
-- Creates a self-signed code signing certificate (persists in your cert store)
-- Signs the exe with SHA256 + DigiCert timestamp
-- Exports the public certificate to `assets/WindowedClaude.cer`
+**What the script does:**
+- Creates a self-signed code signing certificate (RSA 2048, SHA256, valid 5 years)
+- Stores it in `Cert:\CurrentUser\My` (reused across builds)
+- Signs the exe with Authenticode + DigiCert timestamp
+- Exports the public cert to `assets/WindowedClaude.cer`
 
-This gives the exe a consistent "WindowedClaude" publisher identity and makes SmartScreen less aggressive. For full SmartScreen bypass, consider an OV code signing certificate from a trusted CA.
+**What this gives you:**
+- Publisher shows "WindowedClaude" instead of "Unknown" in Windows dialogs
+- Consistent signing identity builds SmartScreen reputation faster
+- Exe is tamper-evident (signature breaks if modified)
+- Users can optionally trust the cert: `Import-Certificate -FilePath WindowedClaude.cer -CertStoreLocation Cert:\CurrentUser\Root`
+
+For full SmartScreen bypass, use an OV code signing certificate from a CA like Certum, Sectigo, or SignPath.
 
 ---
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|-----------|
-| Language | Rust |
-| Window | winit 0.30 |
-| Pixel buffer | softbuffer 0.4 |
-| Font rendering | fontdue 0.9 (pure Rust, no system deps) |
-| Terminal emulation | alacritty_terminal 0.25 |
-| PTY | portable-pty 0.8 (ConPTY on Windows) |
-| Clipboard | arboard 3 |
-| Font | JetBrains Mono (embedded) |
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Language | Rust | Performance, safety, cross-compilation |
+| Window | winit 0.30 | Cross-platform window management |
+| Pixel buffer | softbuffer 0.4 | Software rendering (no GPU required) |
+| Font rendering | fontdue 0.9 | Pure Rust font rasterization |
+| Terminal emulation | alacritty_terminal 0.25 | VT100/xterm-256color emulation |
+| PTY | portable-pty 0.8 | ConPTY (Windows) / Unix PTY (macOS) |
+| Clipboard | arboard 3 | System clipboard integration |
+| Font | JetBrains Mono | Embedded TTF, no system font dependency |
+| HTTP | reqwest 0.12 | Downloading Git installer |
+| Serialization | serde + serde_json | Config file persistence |
+| Registry | winreg 0.55 | Windows shortcuts + context menu |
+| Async | tokio 1 | Background installer thread |
 
 No OpenGL. No GPU. No Electron. Just pixels.
 
@@ -278,29 +315,39 @@ No OpenGL. No GPU. No Electron. Just pixels.
 
 ```
 src/
-  main.rs              # Entry point, CLI arg parsing (--auto-accept, --uninstall)
-  config.rs            # Settings persistence (JSON)
+  main.rs              # Entry point, CLI args (--auto-accept, --uninstall)
+  config.rs            # Settings persistence (JSON, auto-save)
   installer/
-    mod.rs             # First-run orchestration
-    git.rs             # Git for Windows download + installation
-    claude.rs          # Claude CLI installation
-    shortcuts.rs       # Shortcuts + context menu registration
+    mod.rs             # First-run orchestration + progress reporting
+    git.rs             # Git for Windows download + silent install
+    claude.rs          # Claude CLI installation (PowerShell/bash)
+    shortcuts.rs       # .lnk shortcuts (with icons) + context menu
     uninstall.rs       # Clean uninstall (--uninstall)
   terminal/
-    mod.rs             # alacritty_terminal integration
-    pty.rs             # PTY session (ConPTY/Unix)
+    mod.rs             # alacritty_terminal wrapper (Arc<Mutex<Term>>)
+    pty.rs             # PTY session (ConPTY/Unix, I/O threads)
   ui/
     mod.rs
-    window.rs          # winit event loop, input, multi-tab, settings
-    renderer.rs        # Software renderer (cells, glyphs, title bar, settings overlay)
-    theme.rs           # 8 built-in themes + color utilities
+    window.rs          # Event loop, input, multi-tab, settings, app state machine
+    renderer.rs        # Software renderer (glyphs, cells, title bar, settings overlay, corner masking)
+    theme.rs           # 8 built-in themes + Color type + ANSI 256-color support
 assets/
-  fonts/               # Embedded JetBrains Mono
-  icon.ico             # App icon
-  app.manifest         # Windows application manifest (UAC, DPI, compatibility)
+  fonts/               # JetBrains Mono Regular (embedded at compile time)
+  icon.ico             # Windows app icon (embedded via winresource)
+  app.manifest         # Windows manifest (DPI, UAC asInvoker, Win10/11 compat)
 scripts/
-  sign.ps1             # Self-signed code signing script
+  sign.ps1             # Self-signed code signing (Authenticode + timestamp)
+build.rs               # Windows resource embedding (icon, version info, manifest)
 ```
+
+---
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--auto-accept` | Launch Claude with `--dangerously-skip-permissions` |
+| `--uninstall` | Remove all WindowedClaude traces and self-delete |
 
 ---
 
