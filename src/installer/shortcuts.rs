@@ -2,17 +2,24 @@ use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
 
-/// Create only the Start Menu shortcut (always created on install)
+/// Create Start Menu shortcuts (always created on install)
 pub fn create_start_menu_shortcut() -> Result<()> {
     let exe_path = std::env::current_exe()?;
     let exe_str = exe_path.to_string_lossy();
 
     if let Some(dir) = start_menu_path() {
         let lnk = dir.join("WindowedClaude.lnk");
-        if !lnk.exists() {
-            create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
-            info!("Created Start Menu shortcut: {}", lnk.display());
-        }
+        create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
+        info!("Created Start Menu shortcut: {}", lnk.display());
+
+        let auto_lnk = dir.join("WindowedClaude (Auto-Accept).lnk");
+        create_lnk(
+            &auto_lnk,
+            &exe_str,
+            "--auto-accept",
+            "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
+        )?;
+        info!("Created Start Menu auto-accept shortcut: {}", auto_lnk.display());
     }
     Ok(())
 }
@@ -26,10 +33,18 @@ pub fn create_desktop_shortcut() -> Result<()> {
     if let Some(dir) = dirs::desktop_dir() {
         // Main shortcut
         let lnk = dir.join("WindowedClaude.lnk");
-        if !lnk.exists() {
-            create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
-            info!("Created Desktop shortcut: {}", lnk.display());
-        }
+        create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
+        info!("Created Desktop shortcut: {}", lnk.display());
+
+        // Auto-accept shortcut — right-click context menu doesn't work on .lnk files
+        let auto_lnk = dir.join("WindowedClaude (Auto-Accept).lnk");
+        create_lnk(
+            &auto_lnk,
+            &exe_str,
+            "--auto-accept",
+            "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
+        )?;
+        info!("Created Desktop auto-accept shortcut: {}", auto_lnk.display());
     }
     Ok(())
 }
@@ -129,8 +144,9 @@ fn create_lnk(
 ) -> Result<()> {
     let lnk_str = lnk_path.to_string_lossy();
 
+    // Set IconLocation to the exe itself so the shortcut inherits the app icon
     let ps_script = format!(
-        r#"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{lnk}'); $s.TargetPath = '{target}'; $s.Arguments = '{args}'; $s.Description = '{desc}'; $s.Save()"#,
+        r#"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{lnk}'); $s.TargetPath = '{target}'; $s.Arguments = '{args}'; $s.Description = '{desc}'; $s.IconLocation = '{target},0'; $s.Save()"#,
         lnk = lnk_str,
         target = target,
         args = arguments,
