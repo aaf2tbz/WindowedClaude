@@ -12,11 +12,20 @@ use log::info;
 use softbuffer::Surface;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
+
+/// Maximum bytes of PTY output to process per frame.
+/// Prevents huge code blocks from stalling the render loop.
+const MAX_PTY_BYTES_PER_FRAME: usize = 64 * 1024; // 64 KB
+
+/// Idle poll interval — how often we check for new PTY output when nothing is happening.
+/// 50ms = ~20 fps idle ceiling. Input events still trigger immediate redraws.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 const INITIAL_WIDTH: u32 = 1000;
 const INITIAL_HEIGHT: u32 = 650;
@@ -82,6 +91,10 @@ struct App {
     keybinds_draft: crate::config::KeyBinds,
     // Installer channel — receives status updates from background thread
     install_rx: Option<std::sync::mpsc::Receiver<installer::InstallMsg>>,
+    /// Last time a frame was rendered (for frame rate limiting)
+    last_frame: Instant,
+    /// True when there's still pending PTY output that couldn't fit in the per-frame budget
+    has_pending_output: bool,
 }
 
 impl App {
@@ -122,6 +135,8 @@ impl App {
             keybinds_waiting_for_key: false,
             keybinds_draft,
             install_rx: None,
+            last_frame: Instant::now(),
+            has_pending_output: false,
         }
     }
 
@@ -1346,11 +1361,22 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppPhase::Terminal => {
-                        // Drain PTY output for ALL tabs (prevents memory buildup)
+                        // Drain PTY output for ALL tabs with a per-frame byte budget.
+                        // This prevents huge code blocks (with heavy ANSI color sequences)
+                        // from stalling the render loop and making the window unresponsive.
+                        let mut total_bytes = 0usize;
+                        self.has_pending_output = false;
                         for tab in &mut self.tabs {
                             if let Some(pty) = &tab.pty {
                                 while let Some(data) = pty.try_read() {
+                                    total_bytes += data.len();
                                     tab.terminal.process(&data);
+                                    if total_bytes >= MAX_PTY_BYTES_PER_FRAME {
+                                        // Budget exhausted — there may be more data waiting.
+                                        // We'll pick it up next frame so the UI stays responsive.
+                                        self.has_pending_output = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1455,10 +1481,35 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                self.request_redraw();
+                self.last_frame = Instant::now();
+
+                // If there's pending PTY output that exceeded this frame's budget,
+                // request another redraw immediately to keep draining it.
+                // Otherwise, about_to_wait() will schedule the next poll.
+                if self.has_pending_output || self.settings_click_flash > 0 {
+                    self.request_redraw();
+                }
             }
 
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Schedule the next wake-up based on current state.
+        // This replaces the old unconditional request_redraw() spin loop.
+        if self.has_pending_output {
+            // Pending PTY data — render ASAP but respect frame budget
+            event_loop.set_control_flow(ControlFlow::Poll);
+            self.request_redraw();
+        } else {
+            // No pending output — poll at a relaxed rate to catch new PTY data
+            // (winit can't be woken by mpsc channels, so we poll).
+            // 50ms = 20 fps idle ceiling — plenty responsive for terminal output,
+            // input events still trigger immediate redraws via request_redraw().
+            let next = self.last_frame + IDLE_POLL_INTERVAL;
+            event_loop.set_control_flow(ControlFlow::WaitUntil(next));
+            self.request_redraw();
         }
     }
 }
