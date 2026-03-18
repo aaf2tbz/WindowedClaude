@@ -812,6 +812,8 @@ impl Renderer {
         buf_width: usize,
         buf_height: usize,
         config: &crate::config::Config,
+        hover_row: i32,
+        click_flash: u8,
     ) {
         // Semi-transparent dark overlay covering whole window
         let overlay = Color::rgba(0, 0, 0, 160);
@@ -853,50 +855,92 @@ impl Renderer {
         let mut row_y = header_y + self.cell_height + 20;
         let row_spacing = self.cell_height + 16;
 
+        // Hover highlight color
+        let hover_bg = Color::rgba(
+            self.theme.cursor.r,
+            self.theme.cursor.g,
+            self.theme.cursor.b,
+            25,
+        );
+        // Click flash color (brighter)
+        let flash_bg = Color::rgba(
+            self.theme.cursor.r,
+            self.theme.cursor.g,
+            self.theme.cursor.b,
+            60,
+        );
+
+        let mut current_row: i32 = 0;
+
+        // Helper: draw row hover/flash background
+        let draw_row_bg = |buf: &mut [u32], row_y: usize, row_idx: i32| {
+            if click_flash > 0 && hover_row == row_idx {
+                Self::fill_rounded_rect(buf, buf_width, panel_x + 8, row_y.saturating_sub(6), panel_w - 16, row_spacing, 6, flash_bg);
+            } else if hover_row == row_idx {
+                Self::fill_rounded_rect(buf, buf_width, panel_x + 8, row_y.saturating_sub(6), panel_w - 16, row_spacing, 6, hover_bg);
+            }
+        };
+
+        // Button style helper colors
+        let btn_bg_normal = self.theme.window_border;
+        let btn_bg_hover = Color::rgb(
+            self.theme.window_border.r.saturating_add(25),
+            self.theme.window_border.g.saturating_add(25),
+            self.theme.window_border.b.saturating_add(25),
+        );
+
         // Theme row
+        draw_row_bg(buf, row_y, current_row);
         self.render_string(buf, buf_width, row_x, row_y, "Theme", self.theme.fg);
-        // Theme value as clickable pill
         let theme_pill_x = value_x;
         let theme_pill_w = self.theme.name.len() * self.cell_width + 16;
         let theme_pill_h = self.cell_height + 8;
         let theme_pill_y = row_y.saturating_sub(4);
-        Self::fill_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, Color::rgba(self.theme.cursor.r, self.theme.cursor.g, self.theme.cursor.b, 50));
+        let pill_alpha = if hover_row == current_row { 80u8 } else { 50u8 };
+        Self::fill_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, Color::rgba(self.theme.cursor.r, self.theme.cursor.g, self.theme.cursor.b, pill_alpha));
         Self::stroke_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, 1, self.theme.cursor);
         self.render_string(buf, buf_width, theme_pill_x + 8, row_y, self.theme.name, self.theme.cursor);
+        current_row += 1;
         row_y += row_spacing;
 
         // Font Size row
+        draw_row_bg(buf, row_y, current_row);
         self.render_string(buf, buf_width, row_x, row_y, "Font Size", self.theme.fg);
         let size_str = format!("{:.0}pt", config.font_size);
         self.render_string(buf, buf_width, value_x + 30, row_y, &size_str, self.theme.fg);
-        // - button
-        Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+        let is_hover = hover_row == current_row;
+        let minus_bg = if is_hover { btn_bg_hover } else { btn_bg_normal };
+        Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
         self.render_string(buf, buf_width, value_x + 6, row_y, "-", self.theme.fg);
-        // + button
         let plus_x = value_x + 30 + size_str.len() * self.cell_width + 8;
-        Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+        Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
         self.render_string(buf, buf_width, plus_x + 6, row_y, "+", self.theme.fg);
+        current_row += 1;
         row_y += row_spacing;
 
         // Transparency row
+        draw_row_bg(buf, row_y, current_row);
         self.render_string(buf, buf_width, row_x, row_y, "Transparency", self.theme.fg);
         let trans_label = if config.transparent { "On" } else { "Off" };
         let trans_color = if config.transparent { self.theme.ansi[2] } else { self.theme.ansi[1] };
         self.render_string(buf, buf_width, value_x, row_y, trans_label, trans_color);
+        current_row += 1;
         row_y += row_spacing;
 
         // Opacity row (only when transparency is on)
         if config.transparent {
+            draw_row_bg(buf, row_y, current_row);
             self.render_string(buf, buf_width, row_x, row_y, "Opacity", self.theme.fg);
             let opacity_str = format!("{:.0}%", config.opacity * 100.0);
             self.render_string(buf, buf_width, value_x + 30, row_y, &opacity_str, self.theme.fg);
-            // - button
-            Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+            let is_hover = hover_row == current_row;
+            let minus_bg = if is_hover { btn_bg_hover } else { btn_bg_normal };
+            Self::fill_rounded_rect(buf, buf_width, value_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
             self.render_string(buf, buf_width, value_x + 6, row_y, "-", self.theme.fg);
-            // + button
             let plus_x = value_x + 30 + opacity_str.len() * self.cell_width + 8;
-            Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, self.theme.window_border);
+            Self::fill_rounded_rect(buf, buf_width, plus_x, row_y.saturating_sub(2), 22, self.cell_height + 4, 4, minus_bg);
             self.render_string(buf, buf_width, plus_x + 6, row_y, "+", self.theme.fg);
+            current_row += 1;
             row_y += row_spacing;
         }
 
@@ -906,9 +950,23 @@ impl Renderer {
         let btn_h = self.cell_height + 12;
         let btn_x = row_x;
         let btn_y = row_y;
-        Self::fill_rounded_rect(buf, buf_width, btn_x, btn_y, btn_w, btn_h, 6, self.theme.window_border);
+        let is_btn_hover = hover_row == current_row;
+        let is_btn_flash = click_flash > 0 && hover_row == current_row;
+        let btn_fill = if is_btn_flash {
+            self.theme.cursor
+        } else if is_btn_hover {
+            btn_bg_hover
+        } else {
+            btn_bg_normal
+        };
+        let btn_text_color = if is_btn_flash {
+            self.theme.bg
+        } else {
+            self.theme.fg
+        };
+        Self::fill_rounded_rect(buf, buf_width, btn_x, btn_y, btn_w, btn_h, 6, btn_fill);
         Self::stroke_rounded_rect(buf, buf_width, btn_x, btn_y, btn_w, btn_h, 6, 1, self.theme.fg);
-        self.render_string(buf, buf_width, btn_x + 12, btn_y + 6, btn_text, self.theme.fg);
+        self.render_string(buf, buf_width, btn_x + 12, btn_y + 6, btn_text, btn_text_color);
 
         // Hint at bottom
         let hint = "Press Escape to close";

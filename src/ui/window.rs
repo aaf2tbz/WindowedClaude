@@ -69,6 +69,10 @@ struct App {
     selecting: bool,
     maximized: bool,
     settings_open: bool,
+    /// Which settings row the mouse is hovering over (for visual feedback)
+    settings_hover_row: i32,
+    /// Flash timer for settings click feedback (counts down frames)
+    settings_click_flash: u8,
     // Installer channel — receives status updates from background thread
     install_rx: Option<std::sync::mpsc::Receiver<installer::InstallMsg>>,
 }
@@ -102,6 +106,8 @@ impl App {
             selecting: false,
             maximized: false,
             settings_open: false,
+            settings_hover_row: -1,
+            settings_click_flash: 0,
             install_rx: None,
         }
     }
@@ -449,12 +455,38 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Track settings hover row
+                if self.settings_open {
+                    if let Some(renderer) = &self.renderer {
+                        let (px, py, pw, ph) = renderer.settings_panel_bounds(
+                            self.width as usize, self.height as usize,
+                        );
+                        let mx = position.x as usize;
+                        let my = position.y as usize;
+                        if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+                            let header_y = py + 16;
+                            let row_spacing = renderer.cell_height + 16;
+                            let first_row_y = header_y + renderer.cell_height + 20;
+                            if my >= first_row_y {
+                                self.settings_hover_row = ((my - first_row_y) / row_spacing) as i32;
+                            } else {
+                                self.settings_hover_row = -1;
+                            }
+                        } else {
+                            self.settings_hover_row = -1;
+                        }
+                    }
+                    self.request_redraw();
+                }
+
                 // Update cursor icon based on edge proximity
                 if let Some(window) = &self.window {
                     if let Some(dir) = self.resize_direction(position.x, position.y) {
                         window.set_cursor(CursorIcon::from(dir));
                     } else if self.in_title_bar(position.y) {
                         window.set_cursor(CursorIcon::Default);
+                    } else if self.settings_open {
+                        window.set_cursor(CursorIcon::Pointer);
                     } else {
                         window.set_cursor(CursorIcon::Text);
                     }
@@ -553,6 +585,7 @@ impl ApplicationHandler for App {
                                             r.theme = new_theme;
                                         }
                                         self.update_title();
+                                        self.settings_click_flash = 6;
                                         self.request_redraw();
                                         return;
                                     }
@@ -564,6 +597,7 @@ impl ApplicationHandler for App {
                                         if mx >= value_x && mx <= value_x + 22 {
                                             self.config.font_size = (self.config.font_size - 1.0).max(8.0);
                                             self.config.save();
+                                            self.settings_click_flash = 6;
                                             self.rebuild_renderer();
                                             return;
                                         }
@@ -573,6 +607,7 @@ impl ApplicationHandler for App {
                                         if mx >= plus_x && mx <= plus_x + 22 {
                                             self.config.font_size = (self.config.font_size + 1.0).min(48.0);
                                             self.config.save();
+                                            self.settings_click_flash = 6;
                                             self.rebuild_renderer();
                                             return;
                                         }
@@ -583,6 +618,7 @@ impl ApplicationHandler for App {
                                     if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 && mx >= value_x {
                                         self.config.toggle_transparency();
                                         self.update_title();
+                                        self.settings_click_flash = 6;
                                         self.request_redraw();
                                         return;
                                     }
@@ -594,6 +630,7 @@ impl ApplicationHandler for App {
                                             if mx >= value_x && mx <= value_x + 22 {
                                                 self.config.adjust_opacity(-0.05);
                                                 self.update_title();
+                                                self.settings_click_flash = 6;
                                                 self.request_redraw();
                                                 return;
                                             }
@@ -602,6 +639,7 @@ impl ApplicationHandler for App {
                                             if mx >= plus_x && mx <= plus_x + 22 {
                                                 self.config.adjust_opacity(0.05);
                                                 self.update_title();
+                                                self.settings_click_flash = 6;
                                                 self.request_redraw();
                                                 return;
                                             }
@@ -622,6 +660,7 @@ impl ApplicationHandler for App {
                                         if let Err(e) = installer::shortcuts::create_start_menu_shortcut() {
                                             log::warn!("Start menu shortcut failed: {}", e);
                                         }
+                                        self.settings_click_flash = 6;
                                         self.request_redraw();
                                         return;
                                     }
@@ -1110,7 +1149,14 @@ impl ApplicationHandler for App {
 
                                     // Settings overlay (on top of terminal)
                                     if self.settings_open {
-                                        renderer.render_settings_overlay(&mut buffer, w, h, &self.config);
+                                        renderer.render_settings_overlay(
+                                            &mut buffer, w, h, &self.config,
+                                            self.settings_hover_row, self.settings_click_flash,
+                                        );
+                                        // Decay click flash
+                                        if self.settings_click_flash > 0 {
+                                            self.settings_click_flash -= 1;
+                                        }
                                     }
 
                                     let _ = buffer.present();
