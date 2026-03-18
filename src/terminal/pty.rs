@@ -6,42 +6,58 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-/// Manages a PTY session running Git Bash → Claude
+/// Manages a PTY session running Claude
 pub struct PtySession {
-    /// Channel to send input bytes to the PTY
     pub input_tx: mpsc::Sender<Vec<u8>>,
-    /// Channel to receive output bytes from the PTY
     pub output_rx: mpsc::Receiver<Vec<u8>>,
 }
 
 impl PtySession {
-    /// Spawn a new PTY session running Claude inside Git Bash.
-    /// If `auto_accept` is true, passes --dangerously-skip-permissions to Claude.
+    /// Spawn Claude in a subprocess.
+    /// On Windows: runs via cmd.exe with CLAUDE_CODE_GIT_BASH_PATH set.
+    /// On macOS/Linux: runs via bash.
     pub fn spawn(git_bash: PathBuf, claude_exe: PathBuf, auto_accept: bool) -> Result<Self> {
         let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>();
         let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
 
-        info!("Spawning Git Bash at: {}", git_bash.display());
         info!("Claude CLI at: {}", claude_exe.display());
+        info!("Git Bash at: {}", git_bash.display());
 
-        // Build the Claude command with optional flags
-        let claude_cmd = if auto_accept {
-            info!("Auto-accept mode enabled");
-            format!("\"{}\" --dangerously-skip-permissions", claude_exe.display())
+        let mut cmd = if cfg!(windows) {
+            // On Windows: run Claude directly via cmd.exe
+            // Claude Code needs CLAUDE_CODE_GIT_BASH_PATH to find Git Bash
+            let mut args = vec![claude_exe.to_string_lossy().to_string()];
+            if auto_accept {
+                args.push("--dangerously-skip-permissions".to_string());
+                info!("Auto-accept mode enabled");
+            }
+
+            let mut c = Command::new("cmd.exe");
+            c.arg("/C").args(&args);
+            c.env("CLAUDE_CODE_GIT_BASH_PATH", &git_bash);
+            c.env("TERM", "xterm-256color");
+            c
         } else {
-            format!("\"{}\"", claude_exe.display())
+            // On macOS/Linux: run through bash
+            let claude_cmd = if auto_accept {
+                info!("Auto-accept mode enabled");
+                format!("\"{}\" --dangerously-skip-permissions", claude_exe.display())
+            } else {
+                format!("\"{}\"", claude_exe.display())
+            };
+
+            let mut c = Command::new(&git_bash);
+            c.args(["-c", &claude_cmd]);
+            c.env("TERM", "xterm-256color");
+            c
         };
 
-        // Spawn Git Bash with Claude as the initial command
-        let mut child = Command::new(&git_bash)
-            .args(["-c", &claude_cmd])
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("CLAUDE_CODE_GIT_BASH_PATH", &git_bash)
-            .env("TERM", "xterm-256color")
             .spawn()
-            .context("Failed to spawn Git Bash process")?;
+            .context("Failed to spawn Claude process")?;
 
         let mut stdin = child.stdin.take().context("No stdin")?;
         let mut stdout = child.stdout.take().context("No stdout")?;
@@ -78,7 +94,6 @@ impl PtySession {
         })
     }
 
-    /// Send raw bytes to the PTY (keyboard input)
     pub fn write(&self, data: &[u8]) -> Result<()> {
         self.input_tx
             .send(data.to_vec())
@@ -86,7 +101,6 @@ impl PtySession {
         Ok(())
     }
 
-    /// Try to read available output (non-blocking)
     pub fn try_read(&self) -> Option<Vec<u8>> {
         self.output_rx.try_recv().ok()
     }
