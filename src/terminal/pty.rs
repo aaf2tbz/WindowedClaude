@@ -36,6 +36,7 @@ impl PtySession {
         git_bash: PathBuf,
         claude_exe: PathBuf,
         auto_accept: bool,
+        continue_session: bool,
         cols: u16,
         rows: u16,
     ) -> Result<Self> {
@@ -62,6 +63,10 @@ impl PtySession {
                 c.arg("--dangerously-skip-permissions");
                 info!("Auto-accept mode enabled");
             }
+            if continue_session {
+                c.arg("--continue");
+                info!("Continuing previous conversation");
+            }
             c.env("CLAUDE_CODE_GIT_BASH_PATH", git_bash.to_string_lossy().as_ref());
             c.env("TERM", "xterm-256color");
             c
@@ -71,6 +76,10 @@ impl PtySession {
             if auto_accept {
                 c.arg("--dangerously-skip-permissions");
                 info!("Auto-accept mode enabled");
+            }
+            if continue_session {
+                c.arg("--continue");
+                info!("Continuing previous conversation");
             }
             c.env("TERM", "xterm-256color");
             c.env("COLORTERM", "truecolor");

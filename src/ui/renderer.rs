@@ -655,6 +655,123 @@ impl Renderer {
         Self::mask_window_corners(buf, buf_width, buf_height);
     }
 
+    /// Render the session restore prompt screen.
+    pub fn render_restore_prompt(
+        &mut self,
+        buf: &mut [u32],
+        buf_width: usize,
+        buf_height: usize,
+        opacity: f32,
+        hover: i32,
+    ) {
+        let bg = self.theme.bg_with_opacity(opacity);
+        buf.fill(pack_color(bg));
+        self.render_title_bar(buf, buf_width, opacity);
+
+        let start_y = self.title_bar_height + (buf_height.saturating_sub(self.title_bar_height)) / 4;
+
+        // Title
+        self.render_string(buf, buf_width, 0, start_y, "  Restore previous session?", self.theme.cursor);
+
+        // Options as clickable buttons
+        let options = [
+            "[1] Restore + Continue conversations",
+            "[2] Restore (fresh conversations)",
+            "[3] Start fresh",
+        ];
+        let hints = [
+            "resumes Claude conversations",
+            "shows old scrollback, new Claude sessions",
+            "no restore, discard session",
+        ];
+
+        let box_x = self.cell_width * 2;
+        let box_w = 40 * self.cell_width;
+        let row_h = self.cell_height + 16;
+        let options_y = start_y + self.cell_height * 2;
+
+        for (i, (opt, hint)) in options.iter().zip(hints.iter()).enumerate() {
+            let y = options_y + i * row_h;
+            let is_hovered = hover == i as i32;
+
+            // Option background
+            if is_hovered {
+                let highlight = Color::rgb(
+                    self.theme.bg.r.saturating_add(30),
+                    self.theme.bg.g.saturating_add(30),
+                    self.theme.bg.b.saturating_add(30),
+                );
+                Self::fill_rect(buf, buf_width, box_x, y, box_w, row_h.saturating_sub(2), highlight);
+            }
+
+            // Top border for first option
+            if i == 0 {
+                Self::fill_rect(buf, buf_width, box_x, y, box_w, 1, self.theme.window_border);
+            }
+
+            // Option text
+            let text_color = if is_hovered {
+                self.theme.ansi[2] // Green when hovered
+            } else {
+                self.theme.fg
+            };
+            self.render_string(buf, buf_width, box_x + self.cell_width, y + 4, opt, text_color);
+
+            // Hint text (dimmed, right-aligned-ish)
+            let hint_color = Color::rgb(
+                self.theme.fg.r / 2 + 20,
+                self.theme.fg.g / 2 + 20,
+                self.theme.fg.b / 2 + 20,
+            );
+            let hint_x = box_x + self.cell_width + opt.len() * self.cell_width + self.cell_width * 2;
+            if hint_x + hint.len() * self.cell_width < buf_width {
+                self.render_string(buf, buf_width, hint_x, y + 4, hint, hint_color);
+            }
+
+            // Bottom separator
+            Self::fill_rect(buf, buf_width, box_x, y + row_h.saturating_sub(2), box_w, 1, self.theme.window_border);
+        }
+
+        // Keyboard hint
+        let hint_y = options_y + 3 * row_h + self.cell_height;
+        let hint_color = Color::rgb(
+            self.theme.fg.r / 2 + 40,
+            self.theme.fg.g / 2 + 40,
+            self.theme.fg.b / 2 + 40,
+        );
+        self.render_string(buf, buf_width, 0, hint_y, "  (Press 1/2/3, Enter to select, Escape to start fresh)", hint_color);
+
+        Self::mask_window_corners(buf, buf_width, buf_height);
+    }
+
+    /// Hit-test for restore prompt options. Returns option index (0-2) or -1 for none.
+    pub fn restore_prompt_hit_test(
+        &self,
+        _buf_width: usize,
+        buf_height: usize,
+        mx: usize,
+        my: usize,
+    ) -> i32 {
+        let start_y = self.title_bar_height + (buf_height.saturating_sub(self.title_bar_height)) / 4;
+        let box_x = self.cell_width * 2;
+        let box_w = 40 * self.cell_width;
+        let row_h = self.cell_height + 16;
+        let options_y = start_y + self.cell_height * 2;
+
+        if mx < box_x || mx > box_x + box_w {
+            return -1;
+        }
+
+        for i in 0..3 {
+            let y = options_y + i * row_h;
+            if my >= y && my < y + row_h {
+                return i as i32;
+            }
+        }
+
+        -1
+    }
+
     /// Render a complete terminal frame reading cell data from the terminal
     pub fn render_frame(
         &mut self,

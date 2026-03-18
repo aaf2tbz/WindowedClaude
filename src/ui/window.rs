@@ -42,14 +42,28 @@ const BTN_SPACING: f64 = 28.0;
 const BTN_RIGHT_PAD: f64 = 30.0;
 
 /// App state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum AppPhase {
     /// Downloading Git + installing Claude (first run)
     Installing { status: String },
     /// Showing the welcome/shortcut prompt (first run only)
     WelcomeScreen,
+    /// Ask user whether to restore a previous session
+    RestorePrompt { session: crate::session::SavedSession },
     /// Normal terminal operation
     Terminal,
+}
+
+impl PartialEq for AppPhase {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (AppPhase::Installing { .. }, AppPhase::Installing { .. })
+                | (AppPhase::WelcomeScreen, AppPhase::WelcomeScreen)
+                | (AppPhase::RestorePrompt { .. }, AppPhase::RestorePrompt { .. })
+                | (AppPhase::Terminal, AppPhase::Terminal)
+        )
+    }
 }
 
 /// A single terminal tab with its own PTY + terminal emulator
@@ -111,6 +125,10 @@ struct App {
     last_rebuild: Instant,
     /// Last time config was saved to disk
     last_config_save: Instant,
+    /// Which restore prompt option the mouse is hovering over
+    restore_hover: i32,
+    /// Last time we autosaved the session (periodic 60s autosave)
+    last_session_save: Instant,
 }
 
 impl App {
@@ -119,6 +137,9 @@ impl App {
             AppPhase::Installing { status: "Preparing...".to_string() }
         } else if needs_welcome {
             AppPhase::WelcomeScreen
+        } else if let Some(session) = crate::session::SavedSession::load() {
+            info!("Found saved session with {} tabs", session.tabs.len());
+            AppPhase::RestorePrompt { session }
         } else {
             AppPhase::Terminal
         };
@@ -158,6 +179,8 @@ impl App {
             renderer_dirty: false,
             last_rebuild: Instant::now(),
             last_config_save: Instant::now(),
+            restore_hover: -1,
+            last_session_save: Instant::now(),
         }
     }
 
@@ -194,7 +217,7 @@ impl App {
 
         let terminal = Terminal::new(cols as usize, rows as usize);
 
-        let pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
+        let pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, false, cols, rows) {
             Ok(session) => {
                 info!("PTY session spawned for tab ({}x{})", cols, rows);
                 Some(session)
@@ -242,7 +265,7 @@ impl App {
             tab.terminal = Terminal::new(cols as usize, rows as usize);
             tab.child_exited = false;
             tab.exit_status = None;
-            tab.pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
+            tab.pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, false, cols, rows) {
                 Ok(session) => {
                     info!("PTY respawned for tab {}", tab.id);
                     Some(session)
@@ -334,6 +357,75 @@ impl App {
             Err(e) => {
                 log::error!("Failed to save session dump: {}", e);
             }
+        }
+    }
+
+    /// Save current session state to disk (atomic write).
+    fn save_session(&self) {
+        if self.phase != AppPhase::Terminal || self.tabs.is_empty() {
+            return;
+        }
+        let tabs: Vec<crate::session::SavedTab> = self.tabs.iter().map(|tab| {
+            crate::session::SavedTab {
+                title: tab.title.clone(),
+                lines: tab.terminal.extract_lines(),
+            }
+        }).collect();
+        let session = crate::session::SavedSession {
+            version: 1,
+            tabs,
+            active_tab: self.active_tab,
+        };
+        session.save();
+        info!("Session saved ({} tabs)", session.tabs.len());
+    }
+
+    /// Restore a saved session: replay scrollback into new terminals and spawn PTYs.
+    fn restore_session(&mut self, session: crate::session::SavedSession, continue_conversations: bool) {
+        let git_bash = self.config.git_bash_path.clone()
+            .unwrap_or_else(installer::git_bash_path);
+        let claude_cli = installer::claude_cli_path();
+        let (cols, rows) = self.renderer.as_ref()
+            .map(|r| (r.cols as u16, r.rows as u16))
+            .unwrap_or((120, 35));
+
+        for saved_tab in &session.tabs {
+            let mut terminal = Terminal::new(cols as usize, rows as usize);
+            terminal.replay_lines(&saved_tab.lines);
+
+            let pty = match PtySession::spawn(
+                git_bash.clone(), claude_cli.clone(),
+                self.config.auto_accept, continue_conversations,
+                cols, rows,
+            ) {
+                Ok(session) => {
+                    info!("PTY session spawned for restored tab ({}x{})", cols, rows);
+                    Some(session)
+                }
+                Err(e) => {
+                    log::error!("Failed to spawn PTY for restored tab: {}", e);
+                    None
+                }
+            };
+
+            let id = self.next_tab_id;
+            self.next_tab_id += 1;
+
+            self.tabs.push(TabState {
+                id,
+                title: saved_tab.title.clone(),
+                terminal,
+                pty,
+                child_exited: false,
+                exit_status: None,
+            });
+        }
+
+        self.active_tab = session.active_tab.min(self.tabs.len().saturating_sub(1));
+
+        // Fallback if all tabs failed to spawn
+        if self.tabs.is_empty() {
+            self.spawn_pty();
         }
     }
 
@@ -611,7 +703,7 @@ impl ApplicationHandler for App {
             AppPhase::Terminal => {
                 self.spawn_pty();
             }
-            AppPhase::WelcomeScreen => {
+            AppPhase::WelcomeScreen | AppPhase::RestorePrompt { .. } => {
                 // Wait for user input
             }
         }
@@ -626,6 +718,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => {
                 info!("Window close requested");
+                self.save_session();
                 self.cleanup_all_tabs();
                 event_loop.exit();
             }
@@ -728,12 +821,29 @@ impl ApplicationHandler for App {
                     self.request_redraw();
                 }
 
+                // Restore prompt hover tracking
+                if matches!(self.phase, AppPhase::RestorePrompt { .. }) {
+                    if let Some(renderer) = &self.renderer {
+                        let w = self.width as usize;
+                        let h = self.height as usize;
+                        let old_hover = self.restore_hover;
+                        self.restore_hover = renderer.restore_prompt_hit_test(
+                            w, h, position.x as usize, position.y as usize,
+                        );
+                        if self.restore_hover != old_hover {
+                            self.request_redraw();
+                        }
+                    }
+                }
+
                 // Update cursor icon based on edge proximity
                 if let Some(window) = &self.window {
                     if let Some(dir) = self.resize_direction(position.x, position.y) {
                         window.set_cursor(CursorIcon::from(dir));
                     } else if self.in_title_bar(position.y) {
                         window.set_cursor(CursorIcon::Default);
+                    } else if matches!(self.phase, AppPhase::RestorePrompt { .. }) {
+                        window.set_cursor(if self.restore_hover >= 0 { CursorIcon::Pointer } else { CursorIcon::Default });
                     } else if self.settings_open {
                         window.set_cursor(CursorIcon::Pointer);
                     } else {
@@ -760,6 +870,7 @@ impl ApplicationHandler for App {
                             // Check title bar buttons first
                             match self.title_bar_button(self.cursor_x, self.cursor_y) {
                                 Some(TitleBarButton::Close) => {
+                                    self.save_session();
                                     self.cleanup_all_tabs();
                                     event_loop.exit();
                                     return;
@@ -816,6 +927,25 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                             }
+                        } else if matches!(self.phase, AppPhase::RestorePrompt { .. }) {
+                            // Restore prompt click handling
+                            if self.restore_hover >= 0 && self.restore_hover <= 2 {
+                                let choice = self.restore_hover;
+                                let session = if let AppPhase::RestorePrompt { session } =
+                                    std::mem::replace(&mut self.phase, AppPhase::Terminal)
+                                {
+                                    session
+                                } else {
+                                    unreachable!()
+                                };
+                                match choice {
+                                    0 => self.restore_session(session, true),
+                                    1 => self.restore_session(session, false),
+                                    _ => self.spawn_pty(),
+                                }
+                                self.request_redraw();
+                            }
+                            return;
                         } else if self.keybinds_open {
                             // Keybinds overlay click handling
                             if let Some(renderer) = &self.renderer {
@@ -1184,6 +1314,39 @@ impl ApplicationHandler for App {
                         }
                         _ => return, // Ignore other keys during welcome
                     }
+                }
+
+                // Restore prompt input
+                if matches!(self.phase, AppPhase::RestorePrompt { .. }) {
+                    let choice = match &logical_key {
+                        Key::Character(c) if c.as_str() == "1" => Some(0),
+                        Key::Character(c) if c.as_str() == "2" => Some(1),
+                        Key::Character(c) if c.as_str() == "3" => Some(2),
+                        Key::Named(NamedKey::Enter) => {
+                            // Enter selects hovered option, default to option 0
+                            Some(if self.restore_hover >= 0 { self.restore_hover } else { 0 })
+                        }
+                        Key::Named(NamedKey::Escape) => Some(2), // Start fresh
+                        _ => None,
+                    };
+                    if let Some(choice) = choice {
+                        // Take the session out of the phase
+                        let session = if let AppPhase::RestorePrompt { session } =
+                            std::mem::replace(&mut self.phase, AppPhase::Terminal)
+                        {
+                            session
+                        } else {
+                            unreachable!()
+                        };
+                        match choice {
+                            0 => self.restore_session(session, true),
+                            1 => self.restore_session(session, false),
+                            _ => self.spawn_pty(),
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                    return; // Ignore other keys during restore prompt
                 }
 
                 // Close settings on Escape
@@ -1639,6 +1802,23 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                    AppPhase::RestorePrompt { .. } => {
+                        // Render the session restore prompt
+                        if let (Some(surface), Some(renderer)) =
+                            (&mut self.surface, &mut self.renderer)
+                        {
+                            let w = self.width as usize;
+                            let h = self.height as usize;
+
+                            if let Ok(mut buffer) = surface.buffer_mut() {
+                                let opacity = self.config.effective_opacity();
+                                renderer.render_restore_prompt(
+                                    &mut buffer, w, h, opacity, self.restore_hover,
+                                );
+                                let _ = buffer.present();
+                            }
+                        }
+                    }
                     AppPhase::Terminal => {
                         // Flush debounced config saves and renderer rebuilds
                         self.flush_debounced();
@@ -1825,6 +2005,12 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Periodic autosave (every 60s)
+        if self.phase == AppPhase::Terminal && self.last_session_save.elapsed() >= Duration::from_secs(60) {
+            self.save_session();
+            self.last_session_save = Instant::now();
+        }
+
         // Schedule the next wake-up based on current state.
         // This replaces the old unconditional request_redraw() spin loop.
         if self.has_pending_output || self.renderer_dirty || self.config_dirty {

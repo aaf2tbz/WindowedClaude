@@ -7,6 +7,7 @@ extern crate objc;
 
 mod config;
 mod installer;
+mod session;
 mod terminal;
 mod ui;
 
