@@ -4,6 +4,7 @@ use crate::terminal::{PtySession, Terminal};
 use crate::ui::renderer::Renderer;
 use crate::ui::theme;
 use crate::ui::theme::Color;
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use anyhow::Result;
@@ -102,6 +103,14 @@ struct App {
     has_pending_output: bool,
     /// Accumulated fractional scroll pixels (trackpads send tiny deltas that round to 0)
     scroll_pixel_acc: f64,
+    /// Debounce: true when config needs saving (batched to avoid rapid disk writes)
+    config_dirty: bool,
+    /// Debounce: true when renderer needs rebuilding (batched to avoid rapid font/padding reallocs)
+    renderer_dirty: bool,
+    /// Last time renderer was actually rebuilt (for debouncing)
+    last_rebuild: Instant,
+    /// Last time config was saved to disk
+    last_config_save: Instant,
 }
 
 impl App {
@@ -145,6 +154,10 @@ impl App {
             last_frame: Instant::now(),
             has_pending_output: false,
             scroll_pixel_acc: 0.0,
+            config_dirty: false,
+            renderer_dirty: false,
+            last_rebuild: Instant::now(),
+            last_config_save: Instant::now(),
         }
     }
 
@@ -292,7 +305,18 @@ impl App {
     }
 
     /// Rebuild the renderer (e.g., after font size change) and resize terminal to match
+    /// Mark renderer as needing rebuild (debounced — actual rebuild happens in render loop).
+    /// This prevents rapid font/padding changes from causing hundreds of allocations per second.
     fn rebuild_renderer(&mut self) {
+        self.renderer_dirty = true;
+        self.request_redraw();
+    }
+
+    /// Actually rebuild the renderer. Called from the render loop when renderer_dirty is set.
+    fn do_rebuild_renderer(&mut self) {
+        // Drop old renderer explicitly before allocating new one to reduce memory spike
+        self.renderer.take();
+
         let theme = self.current_theme().clone();
         let mut renderer = Renderer::new(theme, self.config.font_size, self.config.padding);
         // Account for tab bar height when tabs > 1
@@ -300,16 +324,51 @@ impl App {
         renderer.resize(self.width, self.height.saturating_sub(tab_bar_offset));
         let cols = renderer.cols;
         let rows = renderer.rows;
-        // Resize ALL tabs
+        // Resize ALL tabs — only send PTY resize if dimensions actually changed
         for tab in &mut self.tabs {
+            let old_cols = if let Ok(term) = tab.terminal.term.lock() {
+                term.columns()
+            } else {
+                0
+            };
+            let old_rows = if let Ok(term) = tab.terminal.term.lock() {
+                term.screen_lines()
+            } else {
+                0
+            };
             tab.terminal.resize(cols, rows);
-            if let Some(pty) = &tab.pty {
-                pty.resize(cols as u16, rows as u16);
+            if cols != old_cols || rows != old_rows {
+                if let Some(pty) = &tab.pty {
+                    pty.resize(cols as u16, rows as u16);
+                }
             }
         }
         self.renderer = Some(renderer);
-        self.request_redraw();
+        self.last_rebuild = Instant::now();
+        self.renderer_dirty = false;
         info!("Font size: {}", self.config.font_size);
+    }
+
+    /// Mark config as needing a save (debounced — actual write happens in render loop).
+    /// Prevents rapid setting changes from saturating disk I/O.
+    fn save_config_debounced(&mut self) {
+        self.config_dirty = true;
+    }
+
+    /// Flush pending config save and renderer rebuild if enough time has passed.
+    /// Called each frame from the render loop.
+    fn flush_debounced(&mut self) {
+        let now = Instant::now();
+        // Rebuild renderer at most every 80ms (12.5 rebuilds/sec max)
+        if self.renderer_dirty && now.duration_since(self.last_rebuild) >= Duration::from_millis(80) {
+            self.do_rebuild_renderer();
+        }
+        // Save config at most every 200ms (5 writes/sec max)
+        if self.config_dirty && now.duration_since(self.last_config_save) >= Duration::from_millis(200) {
+            self.config.save();
+            self.config_dirty = false;
+            self.last_config_save = now;
+        }
     }
 
     fn request_redraw(&self) {
@@ -638,6 +697,7 @@ impl ApplicationHandler for App {
                                 }
                                 Some(TitleBarButton::ThemePill) => {
                                     self.config.cycle_theme();
+                                    self.save_config_debounced();
                                     let new_theme = self.current_theme().clone();
                                     if let Some(renderer) = &mut self.renderer {
                                         renderer.theme = new_theme;
@@ -721,7 +781,7 @@ impl ApplicationHandler for App {
                                         let save_x = px + 24;
                                         if mx >= save_x && mx <= save_x + save_w {
                                             self.config.keybinds = self.keybinds_draft.clone();
-                                            self.config.save();
+                                            self.save_config_debounced();
                                             self.keybinds_open = false;
                                             info!("Keybinds saved");
                                             self.request_redraw();
@@ -783,6 +843,7 @@ impl ApplicationHandler for App {
                                     // Theme row
                                     if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 && mx >= value_x {
                                         self.config.cycle_theme();
+                                        self.save_config_debounced();
                                         let new_theme = self.current_theme().clone();
                                         if let Some(r) = &mut self.renderer {
                                             r.theme = new_theme;
@@ -799,7 +860,7 @@ impl ApplicationHandler for App {
                                         // - button
                                         if mx >= value_x && mx <= value_x + 22 {
                                             self.config.font_size = (self.config.font_size - 1.0).max(8.0);
-                                            self.config.save();
+                                            self.save_config_debounced();
                                             self.settings_click_flash = 6;
                                             self.rebuild_renderer();
                                             return;
@@ -809,7 +870,7 @@ impl ApplicationHandler for App {
                                         let plus_x = value_x + 30 + size_str_len * renderer.cell_width + 8;
                                         if mx >= plus_x && mx <= plus_x + 22 {
                                             self.config.font_size = (self.config.font_size + 1.0).min(48.0);
-                                            self.config.save();
+                                            self.save_config_debounced();
                                             self.settings_click_flash = 6;
                                             self.rebuild_renderer();
                                             return;
@@ -820,6 +881,7 @@ impl ApplicationHandler for App {
                                     // Transparency row
                                     if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 && mx >= value_x {
                                         self.config.toggle_transparency();
+                                        self.save_config_debounced();
                                         self.update_title();
                                         self.settings_click_flash = 6;
                                         self.request_redraw();
@@ -832,6 +894,7 @@ impl ApplicationHandler for App {
                                         if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 {
                                             if mx >= value_x && mx <= value_x + 22 {
                                                 self.config.adjust_opacity(-0.05);
+                                                self.save_config_debounced();
                                                 #[cfg(target_os = "macos")]
                                                 if let Some(w) = &self.window {
                                                     update_macos_opacity(w, self.config.effective_opacity());
@@ -845,6 +908,7 @@ impl ApplicationHandler for App {
                                             let plus_x = value_x + 30 + opacity_str_len * renderer.cell_width + 8;
                                             if mx >= plus_x && mx <= plus_x + 22 {
                                                 self.config.adjust_opacity(0.05);
+                                                self.save_config_debounced();
                                                 #[cfg(target_os = "macos")]
                                                 if let Some(w) = &self.window {
                                                     update_macos_opacity(w, self.config.effective_opacity());
@@ -864,7 +928,7 @@ impl ApplicationHandler for App {
                                         if mx >= value_x && mx <= value_x + 22 {
                                             if self.config.padding > 0 {
                                                 self.config.padding -= 2;
-                                                self.config.save();
+                                                self.save_config_debounced();
                                                 self.settings_click_flash = 6;
                                                 self.rebuild_renderer();
                                             }
@@ -876,7 +940,7 @@ impl ApplicationHandler for App {
                                         if mx >= plus_x && mx <= plus_x + 22 {
                                             if self.config.padding < 48 {
                                                 self.config.padding += 2;
-                                                self.config.save();
+                                                self.save_config_debounced();
                                                 self.settings_click_flash = 6;
                                                 self.rebuild_renderer();
                                             }
@@ -1197,6 +1261,7 @@ impl ApplicationHandler for App {
                     // Toggle Transparency
                     if KeyBinds::combo_matches(kb.get("toggle_transparency"), ctrl, shift, key) {
                         self.config.toggle_transparency();
+                        self.save_config_debounced();
                         #[cfg(target_os = "macos")]
                         if let Some(w) = &self.window {
                             update_macos_opacity(w, self.config.effective_opacity());
@@ -1242,6 +1307,7 @@ impl ApplicationHandler for App {
                     // Increase Opacity
                     if KeyBinds::combo_matches(kb.get("increase_opacity"), ctrl, shift, key) {
                         self.config.adjust_opacity(0.05);
+                        self.save_config_debounced();
                         #[cfg(target_os = "macos")]
                         if let Some(w) = &self.window {
                             update_macos_opacity(w, self.config.effective_opacity());
@@ -1254,6 +1320,7 @@ impl ApplicationHandler for App {
                     // Decrease Opacity
                     if KeyBinds::combo_matches(kb.get("decrease_opacity"), ctrl, shift, key) {
                         self.config.adjust_opacity(-0.05);
+                        self.save_config_debounced();
                         #[cfg(target_os = "macos")]
                         if let Some(w) = &self.window {
                             update_macos_opacity(w, self.config.effective_opacity());
@@ -1266,7 +1333,7 @@ impl ApplicationHandler for App {
                     // Font Size +
                     if KeyBinds::combo_matches(kb.get("increase_font"), ctrl, shift, key) {
                         self.config.font_size = (self.config.font_size + 1.0).min(48.0);
-                        self.config.save();
+                        self.save_config_debounced();
                         self.rebuild_renderer();
                         return;
                     }
@@ -1274,7 +1341,7 @@ impl ApplicationHandler for App {
                     // Font Size -
                     if KeyBinds::combo_matches(kb.get("decrease_font"), ctrl, shift, key) {
                         self.config.font_size = (self.config.font_size - 1.0).max(8.0);
-                        self.config.save();
+                        self.save_config_debounced();
                         self.rebuild_renderer();
                         return;
                     }
@@ -1282,7 +1349,7 @@ impl ApplicationHandler for App {
                     // Font Reset
                     if KeyBinds::combo_matches(kb.get("reset_font"), ctrl, shift, key) {
                         self.config.font_size = 14.0;
-                        self.config.save();
+                        self.save_config_debounced();
                         self.rebuild_renderer();
                         return;
                     }
@@ -1483,6 +1550,9 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppPhase::Terminal => {
+                        // Flush debounced config saves and renderer rebuilds
+                        self.flush_debounced();
+
                         // Drain PTY output for ALL tabs with a per-frame byte budget.
                         // This prevents huge code blocks (with heavy ANSI color sequences)
                         // from stalling the render loop and making the window unresponsive.
@@ -1653,7 +1723,9 @@ impl ApplicationHandler for App {
                 // If there's pending PTY output that exceeded this frame's budget,
                 // request another redraw immediately to keep draining it.
                 // Otherwise, about_to_wait() will schedule the next poll.
-                if self.has_pending_output || self.settings_click_flash > 0 {
+                if self.has_pending_output || self.settings_click_flash > 0
+                    || self.renderer_dirty || self.config_dirty
+                {
                     self.request_redraw();
                 }
             }
@@ -1665,8 +1737,8 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Schedule the next wake-up based on current state.
         // This replaces the old unconditional request_redraw() spin loop.
-        if self.has_pending_output {
-            // Pending PTY data — render ASAP but respect frame budget
+        if self.has_pending_output || self.renderer_dirty || self.config_dirty {
+            // Pending PTY data or debounced changes — render ASAP
             event_loop.set_control_flow(ControlFlow::Poll);
             self.request_redraw();
         } else {
