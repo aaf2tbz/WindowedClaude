@@ -13,6 +13,7 @@ pub const THEME_IDS: &[&str] = &[
     "nord",
     "monokai",
     "gruvbox",
+    "developer",
 ];
 
 /// Look up a theme by its ID string. Returns Claude Dark if not found.
@@ -26,6 +27,7 @@ pub fn theme_by_id(id: &str) -> &'static Theme {
         "nord" => &NORD,
         "monokai" => &MONOKAI,
         "gruvbox" => &GRUVBOX,
+        "developer" => &DEVELOPER,
         _ => &CLAUDE_DARK,
     }
 }
@@ -55,6 +57,9 @@ pub struct Theme {
 
     // ANSI 16 colors: [black, red, green, yellow, blue, magenta, cyan, white] x2
     pub ansi: [Color; 16],
+
+    /// When true, render all UI text (title bar, pills, overlays) in bold
+    pub bold_ui: bool,
 }
 
 impl Theme {
@@ -159,6 +164,7 @@ pub const CLAUDE_DARK: Theme = Theme {
         Color::rgb(140, 230, 230),  // bright cyan
         Color::rgb(240, 240, 250),  // bright white
     ],
+    bold_ui: false,
 };
 
 pub const CLAUDE_LIGHT: Theme = Theme {
@@ -190,6 +196,7 @@ pub const CLAUDE_LIGHT: Theme = Theme {
         Color::rgb(50, 170, 180),
         Color::rgb(252, 250, 248),
     ],
+    bold_ui: false,
 };
 
 pub const MIDNIGHT: Theme = Theme {
@@ -221,6 +228,7 @@ pub const MIDNIGHT: Theme = Theme {
         Color::rgb(120, 230, 245),
         Color::rgb(225, 230, 248),
     ],
+    bold_ui: false,
 };
 
 pub const SOLARIZED_DARK: Theme = Theme {
@@ -252,6 +260,7 @@ pub const SOLARIZED_DARK: Theme = Theme {
         Color::rgb(147, 161, 161),   // base1   (bright cyan) — canonical
         Color::rgb(253, 246, 227),   // base3   (bright white) — canonical
     ],
+    bold_ui: false,
 };
 
 pub const DRACULA: Theme = Theme {
@@ -283,6 +292,7 @@ pub const DRACULA: Theme = Theme {
         Color::rgb(164, 248, 255),
         Color::rgb(255, 255, 255),
     ],
+    bold_ui: false,
 };
 
 pub const NORD: Theme = Theme {
@@ -314,6 +324,7 @@ pub const NORD: Theme = Theme {
         Color::rgb(160, 210, 225),    // bright cyan — lighter
         Color::rgb(236, 239, 244),    // bright white (nord6)
     ],
+    bold_ui: false,
 };
 
 pub const MONOKAI: Theme = Theme {
@@ -345,6 +356,7 @@ pub const MONOKAI: Theme = Theme {
         Color::rgb(150, 235, 245),    // bright cyan
         Color::rgb(255, 255, 255),    // bright white
     ],
+    bold_ui: false,
 };
 
 pub const GRUVBOX: Theme = Theme {
@@ -376,4 +388,50 @@ pub const GRUVBOX: Theme = Theme {
         Color::rgb(142, 192, 124),    // bright cyan
         Color::rgb(235, 219, 178),    // bright white (fg1)
     ],
+    bold_ui: false,
+};
+
+// ---------------------------------------------------------------------------
+// Developer Theme — obsidian + electric. Bold. Clean. Surgical.
+// ---------------------------------------------------------------------------
+//
+// Design philosophy:
+//   - True black background (#0A0A0A) — no grey, no warmth, just void
+//   - Electric cyan accent (#00E5FF) — cuts through the dark like a laser
+//   - High contrast foreground (#E8E8E8) — crisp, no eye strain
+//   - Title bar nearly invisible — merges with the terminal, all focus on code
+//   - Syntax colors chosen for maximum distinguishability at a glance
+//   - Bold UI text throughout — every label punches
+//   - Selection: deep electric teal, unmistakable
+
+pub const DEVELOPER: Theme = Theme {
+    id: "developer",
+    name: "Developer",
+    title_bar_bg: Color::rgb(8, 8, 8),
+    title_bar_text: Color::rgb(180, 180, 180),
+    window_border: Color::rgb(25, 25, 30),
+    bg: Color::rgb(10, 10, 10),
+    fg: Color::rgb(232, 232, 232),
+    cursor: Color::rgb(0, 229, 255),
+    selection_bg: Color::rgb(0, 60, 70),
+    selection_fg: Color::rgb(255, 255, 255),
+    ansi: [
+        Color::rgb(18, 18, 18),       // black
+        Color::rgb(255, 82, 82),      // red — Material A200
+        Color::rgb(105, 240, 174),    // green — mint
+        Color::rgb(255, 213, 79),     // yellow — warm gold
+        Color::rgb(68, 138, 255),     // blue — Material A200
+        Color::rgb(234, 128, 252),    // magenta — electric purple
+        Color::rgb(0, 229, 255),      // cyan — electric, matches cursor
+        Color::rgb(224, 224, 224),    // white
+        Color::rgb(66, 66, 66),       // bright black — visible comments
+        Color::rgb(255, 138, 128),    // bright red
+        Color::rgb(129, 255, 196),    // bright green
+        Color::rgb(255, 228, 130),    // bright yellow
+        Color::rgb(130, 177, 255),    // bright blue
+        Color::rgb(244, 168, 255),    // bright magenta
+        Color::rgb(77, 240, 255),     // bright cyan
+        Color::rgb(250, 250, 250),    // bright white
+    ],
+    bold_ui: true,
 };
