@@ -1,6 +1,6 @@
 [package]
 name = "windowed-claude"
-version = "1.2.2"
+version = "1.3.0"
 edition = "2021"
 description = "WindowedClaude — themed terminal for Claude Code on Windows, one-click install"
 license = "MIT"
