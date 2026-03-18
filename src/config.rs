@@ -1,6 +1,78 @@
 use crate::ui::theme;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// All configurable keybind action IDs
+pub const KEYBIND_ACTIONS: &[(&str, &str, &str)] = &[
+    // (id, display_name, default_combo)
+    ("new_tab",         "New Tab",          "Ctrl+N"),
+    ("close_tab",       "Close Tab",        "Ctrl+W"),
+    ("next_tab",        "Next Tab",         "Ctrl+Tab"),
+    ("prev_tab",        "Prev Tab",         "Ctrl+Shift+Tab"),
+    ("toggle_transparency", "Toggle Transparency", "Ctrl+Shift+O"),
+    ("copy",            "Copy",             "Ctrl+Shift+C"),
+    ("paste",           "Paste",            "Ctrl+Shift+V"),
+    ("increase_opacity","Increase Opacity", "Ctrl+Shift+="),
+    ("decrease_opacity","Decrease Opacity", "Ctrl+Shift+-"),
+    ("increase_font",   "Font Size +",      "Ctrl+="),
+    ("decrease_font",   "Font Size -",      "Ctrl+-"),
+    ("reset_font",      "Reset Font",       "Ctrl+0"),
+];
+
+/// Keybind configuration — maps action IDs to key combo strings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyBinds {
+    #[serde(flatten)]
+    pub bindings: HashMap<String, String>,
+}
+
+impl Default for KeyBinds {
+    fn default() -> Self {
+        let mut bindings = HashMap::new();
+        for (id, _, default_combo) in KEYBIND_ACTIONS {
+            bindings.insert(id.to_string(), default_combo.to_string());
+        }
+        Self { bindings }
+    }
+}
+
+impl KeyBinds {
+    /// Get the combo string for an action
+    pub fn get(&self, action_id: &str) -> &str {
+        self.bindings.get(action_id)
+            .map(|s| s.as_str())
+            .unwrap_or("")
+    }
+
+    /// Get the default combo for an action
+    pub fn default_for(action_id: &str) -> &'static str {
+        KEYBIND_ACTIONS.iter()
+            .find(|(id, _, _)| *id == action_id)
+            .map(|(_, _, combo)| *combo)
+            .unwrap_or("")
+    }
+
+    /// Set a keybind
+    pub fn set(&mut self, action_id: &str, combo: &str) {
+        self.bindings.insert(action_id.to_string(), combo.to_string());
+    }
+
+    /// Reset all to defaults
+    pub fn reset_all(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Check if a specific combo string matches ctrl+key press
+    pub fn combo_matches(combo: &str, ctrl: bool, shift: bool, key: &str) -> bool {
+        let parts: Vec<&str> = combo.split('+').collect();
+        let needs_ctrl = parts.iter().any(|p| p.eq_ignore_ascii_case("ctrl") || p.eq_ignore_ascii_case("cmd"));
+        let needs_shift = parts.iter().any(|p| p.eq_ignore_ascii_case("shift"));
+        let key_part = parts.last().unwrap_or(&"");
+
+        needs_ctrl == ctrl && needs_shift == shift && key_part.eq_ignore_ascii_case(key)
+    }
+}
 
 /// User-configurable settings, persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +89,9 @@ pub struct Config {
     pub transparent: bool,
     /// Custom Git Bash path override
     pub git_bash_path: Option<PathBuf>,
+    /// Custom keybindings
+    #[serde(default)]
+    pub keybinds: KeyBinds,
     /// Runtime flag: launch Claude with --dangerously-skip-permissions
     #[serde(skip)]
     pub auto_accept: bool,
@@ -31,6 +106,7 @@ impl Default for Config {
             opacity: 1.0,
             transparent: false,
             git_bash_path: None,
+            keybinds: KeyBinds::default(),
             auto_accept: false,
         }
     }
