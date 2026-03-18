@@ -92,6 +92,16 @@ All shortcuts are rebindable via the Keybinds editor.
 
 ---
 
+## Security
+
+**VirusTotal:** [1/72 — Clean](https://www.virustotal.com/gui/file/38d069d9d0a139f71176585a8446bff0b491da76a0e4e9eac1683a1916a10673/detection)
+
+The single flag (Microsoft `Program:Win32/Wacapew.Clml`) is a generic heuristic false positive common with unsigned Rust executables. All 71 other engines report clean.
+
+The source code is fully open. You can audit every line and build from source yourself.
+
+---
+
 ## Build from Source
 
 ```bash
