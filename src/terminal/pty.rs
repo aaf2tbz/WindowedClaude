@@ -64,6 +64,17 @@ impl PtySession {
             c.env("LC_ALL", "en_US.UTF-8");
             // Ensure Claude knows it's in a real terminal
             c.env("FORCE_COLOR", "1");
+            // Ensure ~/.local/bin is in PATH so Claude's hooks (Signet, etc.) can find tools
+            let home = dirs::home_dir().unwrap_or_default();
+            let local_bin = home.join(".local").join("bin");
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            if !current_path.contains(&local_bin.to_string_lossy().to_string()) {
+                c.env("PATH", format!("{}:{}", local_bin.display(), current_path));
+            } else {
+                c.env("PATH", &current_path);
+            }
+            // Pass HOME so hooks can resolve ~ paths
+            c.env("HOME", home.to_string_lossy().as_ref());
             c
         };
 
