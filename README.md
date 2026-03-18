@@ -37,7 +37,7 @@ Or: System Settings > Privacy & Security > click "Allow Anyway" after the first 
 - Scrollback via mouse wheel
 
 **Window**
-- 8 polished themes with full ANSI 16-color palettes
+- 9 polished themes with full ANSI 16-color palettes
 - Rounded corners (12px transparent masking)
 - Adjustable transparency + opacity
 - Configurable padding (0-48px)
@@ -96,6 +96,7 @@ All shortcuts are rebindable via the Keybinds editor.
 | **Nord** | Arctic blue-grey |
 | **Monokai Pro** | Warm dark, vivid syntax |
 | **Gruvbox Dark** | Retro earthy tones |
+| **Developer** | Obsidian black, electric cyan accents |
 
 ---
 
