@@ -28,17 +28,21 @@ const BTN_SPACING: f64 = 28.0;
 const BTN_RIGHT_PAD: f64 = 20.0;
 
 /// App state machine
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum AppPhase {
-    /// Normal terminal operation
-    Terminal,
+    /// Downloading Git + installing Claude (first run)
+    Installing { status: String },
     /// Showing the welcome/shortcut prompt (first run only)
     WelcomeScreen,
+    /// Normal terminal operation
+    Terminal,
 }
 
 struct App {
     config: Config,
     phase: AppPhase,
+    needs_install: bool,
+    needs_welcome: bool,
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     renderer: Option<Renderer>,
@@ -53,11 +57,15 @@ struct App {
     mouse_pressed: bool,
     selecting: bool,
     maximized: bool,
+    // Installer channel — receives status updates from background thread
+    install_rx: Option<std::sync::mpsc::Receiver<installer::InstallMsg>>,
 }
 
 impl App {
-    fn new(config: Config, show_welcome: bool) -> Self {
-        let phase = if show_welcome {
+    fn new(config: Config, needs_install: bool, needs_welcome: bool) -> Self {
+        let phase = if needs_install {
+            AppPhase::Installing { status: "Preparing...".to_string() }
+        } else if needs_welcome {
             AppPhase::WelcomeScreen
         } else {
             AppPhase::Terminal
@@ -65,6 +73,8 @@ impl App {
         Self {
             config,
             phase,
+            needs_install,
+            needs_welcome,
             window: None,
             surface: None,
             renderer: None,
@@ -78,7 +88,25 @@ impl App {
             mouse_pressed: false,
             selecting: false,
             maximized: false,
+            install_rx: None,
         }
+    }
+
+    /// Start the installer on a background thread
+    fn start_installer(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel::<installer::InstallMsg>();
+        self.install_rx = Some(rx);
+
+        std::thread::spawn(move || {
+            match installer::run_first_time_setup_with_progress(&tx) {
+                Ok(()) => {
+                    let _ = tx.send(installer::InstallMsg::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(installer::InstallMsg::Error(format!("{}", e)));
+                }
+            }
+        });
     }
 
     fn spawn_pty(&mut self) {
@@ -282,9 +310,17 @@ impl ApplicationHandler for App {
         self.terminal = Some(terminal);
         self.window = Some(window);
 
-        // Only spawn PTY immediately if skipping welcome screen
-        if self.phase == AppPhase::Terminal {
-            self.spawn_pty();
+        // Start the appropriate phase
+        match &self.phase {
+            AppPhase::Installing { .. } => {
+                self.start_installer();
+            }
+            AppPhase::Terminal => {
+                self.spawn_pty();
+            }
+            AppPhase::WelcomeScreen => {
+                // Wait for user input
+            }
         }
     }
 
@@ -466,6 +502,11 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 // --- Welcome screen input ---
+                // Block keyboard during install
+                if matches!(self.phase, AppPhase::Installing { .. }) {
+                    return;
+                }
+
                 if self.phase == AppPhase::WelcomeScreen {
                     match &logical_key {
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("y") => {
@@ -645,7 +686,57 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                match self.phase {
+                // Drain install progress messages (collect first to avoid borrow conflict)
+                let mut install_msgs = Vec::new();
+                if let Some(rx) = &self.install_rx {
+                    while let Ok(msg) = rx.try_recv() {
+                        install_msgs.push(msg);
+                    }
+                }
+                for msg in install_msgs {
+                    match msg {
+                        installer::InstallMsg::Progress(s) => {
+                            self.phase = AppPhase::Installing { status: s };
+                        }
+                        installer::InstallMsg::Done => {
+                            info!("Installation complete");
+                            self.install_rx = None;
+                            if self.needs_welcome {
+                                self.phase = AppPhase::WelcomeScreen;
+                            } else {
+                                self.phase = AppPhase::Terminal;
+                                self.spawn_pty();
+                            }
+                        }
+                        installer::InstallMsg::Error(e) => {
+                            log::error!("Install failed: {}", e);
+                            self.phase = AppPhase::Installing {
+                                status: format!("ERROR: {}", e),
+                            };
+                            self.install_rx = None;
+                        }
+                    }
+                }
+
+                // Clone phase to avoid borrow issues with self
+                let phase = self.phase.clone();
+
+                match &phase {
+                    AppPhase::Installing { status } => {
+                        // Render install progress screen
+                        if let (Some(surface), Some(renderer)) =
+                            (&mut self.surface, &mut self.renderer)
+                        {
+                            let w = self.width as usize;
+                            let h = self.height as usize;
+
+                            if let Ok(mut buffer) = surface.buffer_mut() {
+                                let opacity = self.config.effective_opacity();
+                                renderer.render_install_progress(&mut buffer, w, h, opacity, status);
+                                let _ = buffer.present();
+                            }
+                        }
+                    }
                     AppPhase::WelcomeScreen => {
                         // Render the welcome/shortcut prompt screen
                         if let (Some(surface), Some(renderer)) =
@@ -693,9 +784,9 @@ impl ApplicationHandler for App {
     }
 }
 
-pub fn run(config: Config, show_welcome: bool) -> Result<()> {
+pub fn run(config: Config, needs_install: bool, needs_welcome: bool) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(config, show_welcome);
+    let mut app = App::new(config, needs_install, needs_welcome);
     event_loop.run_app(&mut app)?;
     Ok(())
 }

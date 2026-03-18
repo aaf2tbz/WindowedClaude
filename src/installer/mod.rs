@@ -5,6 +5,14 @@ pub mod shortcuts;
 use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+
+/// Message type for install progress (must match window.rs InstallMessage)
+pub enum InstallMsg {
+    Progress(String),
+    Done,
+    Error(String),
+}
 
 /// Where WindowedClaude stores its data (Git portable, config, etc.)
 pub fn data_dir() -> PathBuf {
@@ -37,7 +45,7 @@ fn installed_marker() -> PathBuf {
     data_dir().join(".installed")
 }
 
-/// Whether the shortcut prompt has been shown (so we only ask once)
+/// Whether the shortcut prompt has been shown
 fn shortcut_prompted_marker() -> PathBuf {
     data_dir().join(".shortcut_prompted")
 }
@@ -67,34 +75,41 @@ pub fn mark_shortcut_prompted() {
     let _ = std::fs::write(marker, "ok");
 }
 
-/// Run the full first-time setup (does NOT create shortcuts — that's handled by the welcome screen)
-pub fn run_first_time_setup() -> Result<()> {
+/// Helper to send progress (ignores send errors if receiver is gone)
+fn progress<T: std::fmt::Display>(tx: &Sender<InstallMsg>, msg: T) {
+    let _ = tx.send(InstallMsg::Progress(msg.to_string()));
+}
+
+/// Run first-time setup with progress reporting to the UI thread.
+/// Called from a background thread — sends InstallMsg via the channel.
+pub fn run_first_time_setup_with_progress(tx: &Sender<InstallMsg>) -> Result<()> {
     let data = data_dir();
     std::fs::create_dir_all(&data)?;
 
     if cfg!(windows) {
-        info!("Step 1/2: Installing Git for Windows...");
+        progress(tx, "Downloading Git for Windows...");
         git::install_git_portable(&data)?;
 
-        info!("Step 2/2: Installing Claude Code CLI...");
+        progress(tx, "Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
     } else {
-        info!("Step 1/1: Installing Claude Code CLI...");
+        progress(tx, "Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
     }
 
-    // Always create Start Menu shortcut (standard Windows behavior)
+    // Start Menu shortcut + context menu (Windows)
     if cfg!(windows) {
+        progress(tx, "Creating shortcuts...");
         if let Err(e) = shortcuts::create_start_menu_shortcut() {
             log::warn!("Start Menu shortcut failed (non-fatal): {}", e);
         }
-        // Register right-click "Run with Auto-Accept" context menu on the exe
         if let Err(e) = shortcuts::register_context_menu() {
             log::warn!("Context menu registration failed (non-fatal): {}", e);
         }
     }
 
     // Mark as installed
+    progress(tx, "Finishing up...");
     std::fs::write(installed_marker(), "ok")?;
     info!("Setup complete!");
     Ok(())

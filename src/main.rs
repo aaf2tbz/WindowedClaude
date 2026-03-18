@@ -1,3 +1,6 @@
+// Suppress the console window on Windows when double-clicking the exe
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod config;
 mod installer;
 mod terminal;
@@ -23,16 +26,15 @@ fn main() -> Result<()> {
     config.auto_accept = auto_accept;
     info!("Config loaded: theme={}, transparent={}, opacity={}", config.theme_id, config.transparent, config.opacity);
 
-    // Phase 1: Check if first run — install Git + Claude CLI if needed
-    if !installer::is_installed() {
-        info!("First run detected — starting installer");
-        installer::run_first_time_setup()?;
-    }
+    // Determine what phase to start in
+    let needs_install = !installer::is_installed();
+    let needs_welcome = installer::needs_shortcut_prompt();
 
-    // Phase 2: Check if we need to show the welcome/shortcut screen
-    let show_welcome = installer::needs_shortcut_prompt();
+    info!(
+        "Launching (needs_install={}, needs_welcome={}, auto_accept={})",
+        needs_install, needs_welcome, auto_accept
+    );
 
-    // Phase 3: Launch the themed terminal (with welcome screen if first run)
-    info!("Launching terminal (welcome={}, auto_accept={})", show_welcome, auto_accept);
-    ui::run(config, show_welcome)
+    // Window opens FIRST — installer runs inside the window with visual progress
+    ui::run(config, needs_install, needs_welcome)
 }
