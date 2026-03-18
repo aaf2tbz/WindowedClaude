@@ -1,5 +1,6 @@
 use crate::terminal::Terminal;
 use crate::ui::theme::{Color, Theme};
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
 use fontdue::{Font, FontSettings};
@@ -715,6 +716,11 @@ impl Renderer {
             cells.push((col, row, cell.c, cell.fg, cell.bg, cell.flags, selected));
         }
 
+        // Grab scroll position info while we still hold the lock
+        let display_offset = term.grid().display_offset();
+        let total_lines = term.grid().total_lines();
+        let screen_lines = term.grid().screen_lines();
+
         drop(term); // Release the mutex before rendering
 
         let gx = self.grid_x();
@@ -812,6 +818,33 @@ impl Renderer {
                     _ => {}
                 }
             }
+        }
+
+        // 6. Scrollbar indicator (only shown when scrolled into history)
+        let history_size = total_lines.saturating_sub(screen_lines);
+        if display_offset > 0 && history_size > 0 {
+            let grid_h = self.rows * self.cell_height;
+            let gy = self.grid_y();
+
+            // Thumb size scales with visible portion vs total content
+            let total_content = history_size + screen_lines;
+            let thumb_h = ((screen_lines as f64 / total_content as f64) * grid_h as f64)
+                .max(20.0) as usize;
+
+            // Position: display_offset=0 is bottom, display_offset=history_size is top
+            let scroll_fraction = display_offset as f64 / history_size as f64;
+            let thumb_y = gy + ((1.0 - scroll_fraction) * (grid_h - thumb_h) as f64) as usize;
+
+            // Thin scrollbar on the right edge
+            let bar_width = 4;
+            let bar_x = buf_width.saturating_sub(self.pad_right / 2 + bar_width / 2);
+            let bar_color = Color::rgba(
+                self.theme.fg.r,
+                self.theme.fg.g,
+                self.theme.fg.b,
+                100,
+            );
+            Self::fill_rect(buf, buf_width, bar_x, thumb_y, bar_width, thumb_h, bar_color);
         }
 
         Self::mask_window_corners(buf, buf_width, buf_height);
