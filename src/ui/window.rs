@@ -151,17 +151,22 @@ impl App {
     /// Convert pixel coordinates to terminal grid point
     fn pixel_to_point(&self, x: f64, y: f64) -> Option<(Point, Side)> {
         let renderer = self.renderer.as_ref()?;
-        let term_y = y - renderer.title_bar_height as f64;
-        if term_y < 0.0 {
+        let grid_x = renderer.grid_x() as f64;
+        let grid_y = renderer.grid_y() as f64;
+
+        // Must be within the terminal grid area (inside padding)
+        let term_x = x - grid_x;
+        let term_y = y - grid_y;
+        if term_x < 0.0 || term_y < 0.0 {
             return None;
         }
-        let col = (x / renderer.cell_width as f64) as usize;
+
+        let col = (term_x / renderer.cell_width as f64) as usize;
         let row = (term_y / renderer.cell_height as f64) as usize;
         let col = col.min(renderer.cols.saturating_sub(1));
         let row = row.min(renderer.rows.saturating_sub(1));
 
-        // Determine which side of the cell the click is on
-        let cell_mid = (col as f64 + 0.5) * renderer.cell_width as f64;
+        let cell_mid = grid_x + (col as f64 + 0.5) * renderer.cell_width as f64;
         let side = if x < cell_mid { Side::Left } else { Side::Right };
 
         Some((Point::new(Line(row as i32), Column(col)), side))

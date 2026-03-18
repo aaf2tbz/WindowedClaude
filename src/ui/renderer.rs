@@ -22,6 +22,11 @@ pub struct Renderer {
     pub cols: usize,
     pub rows: usize,
     pub title_bar_height: usize,
+    /// Padding around the terminal grid (pixels)
+    pub pad_left: usize,
+    pub pad_right: usize,
+    pub pad_top: usize,
+    pub pad_bottom: usize,
     font: Font,
     font_bold: Font,
     font_size: f32,
@@ -48,6 +53,8 @@ impl Renderer {
         let cell_height = ((metrics.ascent - metrics.descent + metrics.line_gap).ceil() as usize).max(1);
         let ascent = metrics.ascent.ceil() as usize;
 
+        let pad = 12; // Consistent padding on all sides of the terminal grid
+
         Self {
             theme,
             cell_width,
@@ -55,6 +62,10 @@ impl Renderer {
             cols: 120,
             rows: 35,
             title_bar_height: 36,
+            pad_left: pad,
+            pad_right: pad,
+            pad_top: pad,
+            pad_bottom: pad,
             font,
             font_bold,
             font_size,
@@ -75,9 +86,20 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        let term_h = (height as usize).saturating_sub(self.title_bar_height);
-        self.cols = (width as usize / self.cell_width).max(1);
-        self.rows = (term_h / self.cell_height).max(1);
+        let usable_w = (width as usize).saturating_sub(self.pad_left + self.pad_right);
+        let usable_h = (height as usize).saturating_sub(self.title_bar_height + self.pad_top + self.pad_bottom);
+        self.cols = (usable_w / self.cell_width).max(1);
+        self.rows = (usable_h / self.cell_height).max(1);
+    }
+
+    /// The x offset where the terminal grid starts (after left padding)
+    pub fn grid_x(&self) -> usize {
+        self.pad_left
+    }
+
+    /// The y offset where the terminal grid starts (after title bar + top padding)
+    pub fn grid_y(&self) -> usize {
+        self.title_bar_height + self.pad_top
     }
 
     /// Get or rasterize a glyph
@@ -330,7 +352,33 @@ impl Renderer {
         // 2. Title bar
         self.render_title_bar(buf, buf_width, opacity);
 
-        // 3. Read terminal state and render cells
+        // 3. Padding border — draw the window_border color in the padding area
+        let border_color = self.theme.window_border;
+        let gx = self.grid_x();
+        let gy = self.grid_y();
+        let grid_w = self.cols * self.cell_width;
+        let grid_h = self.rows * self.cell_height;
+
+        // Top padding strip (between title bar and grid)
+        if self.pad_top > 0 {
+            Self::fill_rect(buf, buf_width, 0, self.title_bar_height, buf_width, self.pad_top, border_color);
+        }
+        // Bottom padding strip (below grid)
+        let grid_bottom = gy + grid_h;
+        if grid_bottom < buf_height {
+            Self::fill_rect(buf, buf_width, 0, grid_bottom, buf_width, buf_height - grid_bottom, border_color);
+        }
+        // Left padding strip
+        if self.pad_left > 0 {
+            Self::fill_rect(buf, buf_width, 0, gy, self.pad_left, grid_h, border_color);
+        }
+        // Right padding strip (after grid to window edge)
+        let grid_right = gx + grid_w;
+        if grid_right < buf_width {
+            Self::fill_rect(buf, buf_width, grid_right, gy, buf_width - grid_right, grid_h, border_color);
+        }
+
+        // 4. Read terminal state and render cells
         let term = terminal.term.lock().unwrap();
         let content = term.renderable_content();
 
@@ -363,10 +411,13 @@ impl Renderer {
 
         drop(term); // Release the mutex before rendering
 
+        let gx = self.grid_x();
+        let gy = self.grid_y();
+
         // Render each cell
         for (col, row, ch, fg_color, bg_color, flags, selected) in &cells {
-            let px = col * self.cell_width;
-            let py = self.title_bar_height + row * self.cell_height;
+            let px = gx + col * self.cell_width;
+            let py = gy + row * self.cell_height;
 
             if py + self.cell_height > buf_height {
                 continue;
@@ -434,8 +485,8 @@ impl Renderer {
             let cx = cursor_point.column.0;
             let cy = cursor_point.line.0 as usize;
             if cx < self.cols && cy < self.rows {
-                let px = cx * self.cell_width;
-                let py = self.title_bar_height + cy * self.cell_height;
+                let px = gx + cx * self.cell_width;
+                let py = gy + cy * self.cell_height;
                 let cursor_c = Color::rgba(
                     self.theme.cursor.r,
                     self.theme.cursor.g,
