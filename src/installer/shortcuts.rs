@@ -2,8 +2,11 @@ use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
 
-/// Create Start Menu shortcuts (always created on install)
+/// Create Start Menu shortcuts (Windows only)
 pub fn create_start_menu_shortcut() -> Result<()> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
     let exe_path = std::env::current_exe()?;
     let exe_str = exe_path.to_string_lossy();
 
@@ -24,27 +27,57 @@ pub fn create_start_menu_shortcut() -> Result<()> {
     Ok(())
 }
 
-/// Create the Desktop shortcut (only when the user opts in).
-/// Also creates a second shortcut for auto-accept mode.
+/// Create Desktop shortcuts.
+/// Windows: .lnk files. macOS/Linux: .command scripts (double-clickable).
 pub fn create_desktop_shortcut() -> Result<()> {
     let exe_path = std::env::current_exe()?;
     let exe_str = exe_path.to_string_lossy();
 
     if let Some(dir) = dirs::desktop_dir() {
-        // Main shortcut
-        let lnk = dir.join("WindowedClaude.lnk");
-        create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
-        info!("Created Desktop shortcut: {}", lnk.display());
+        if cfg!(windows) {
+            // Windows: .lnk files
+            let lnk = dir.join("WindowedClaude.lnk");
+            create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
+            info!("Created Desktop shortcut: {}", lnk.display());
 
-        // Auto-accept shortcut — right-click context menu doesn't work on .lnk files
-        let auto_lnk = dir.join("WindowedClaude (Auto-Accept).lnk");
-        create_lnk(
-            &auto_lnk,
-            &exe_str,
-            "--auto-accept",
-            "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
-        )?;
-        info!("Created Desktop auto-accept shortcut: {}", auto_lnk.display());
+            let auto_lnk = dir.join("WindowedClaude (Auto-Accept).lnk");
+            create_lnk(
+                &auto_lnk,
+                &exe_str,
+                "--auto-accept",
+                "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
+            )?;
+            info!("Created Desktop auto-accept shortcut: {}", auto_lnk.display());
+        } else {
+            // macOS/Linux: .command scripts (double-clickable)
+            let script = dir.join("WindowedClaude.command");
+            let content = format!(
+                "#!/bin/bash\n# WindowedClaude launcher\n\"{}\" &\ndisown\n",
+                exe_str
+            );
+            std::fs::write(&script, &content)?;
+            // Make executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+            }
+            info!("Created Desktop launcher: {}", script.display());
+
+            // Auto-accept variant
+            let auto_script = dir.join("WindowedClaude (Auto-Accept).command");
+            let auto_content = format!(
+                "#!/bin/bash\n# WindowedClaude Auto-Accept launcher\n\"{}\" --auto-accept &\ndisown\n",
+                exe_str
+            );
+            std::fs::write(&auto_script, &auto_content)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&auto_script, std::fs::Permissions::from_mode(0o755))?;
+            }
+            info!("Created Desktop auto-accept launcher: {}", auto_script.display());
+        }
     }
     Ok(())
 }
