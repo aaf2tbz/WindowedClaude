@@ -74,6 +74,8 @@ impl KeyBinds {
     }
 }
 
+fn default_padding() -> usize { 12 }
+
 /// User-configurable settings, persisted to disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -87,6 +89,9 @@ pub struct Config {
     pub opacity: f32,
     /// Whether transparency mode is enabled
     pub transparent: bool,
+    /// Padding around the terminal grid in pixels (0-48)
+    #[serde(default = "default_padding")]
+    pub padding: usize,
     /// Custom Git Bash path override
     pub git_bash_path: Option<PathBuf>,
     /// Custom keybindings
@@ -105,6 +110,7 @@ impl Default for Config {
             theme_id: "claude-dark".to_string(),
             opacity: 1.0,
             transparent: false,
+            padding: 12,
             git_bash_path: None,
             keybinds: KeyBinds::default(),
             auto_accept: false,
@@ -143,6 +149,7 @@ impl Config {
     fn validate(&mut self) {
         self.opacity = self.opacity.clamp(0.05, 1.0);
         self.font_size = self.font_size.clamp(8.0, 48.0);
+        self.padding = self.padding.min(48);
 
         // Fall back to claude-dark if theme ID is invalid
         if !theme::THEME_IDS.contains(&self.theme_id.as_str()) {

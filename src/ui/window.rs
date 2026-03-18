@@ -234,7 +234,7 @@ impl App {
     /// Rebuild the renderer (e.g., after font size change) and resize terminal to match
     fn rebuild_renderer(&mut self) {
         let theme = self.current_theme().clone();
-        let mut renderer = Renderer::new(theme, self.config.font_size);
+        let mut renderer = Renderer::new(theme, self.config.font_size, self.config.padding);
         // Account for tab bar height when tabs > 1
         let tab_bar_offset = if self.tabs.len() > 1 { 28u32 } else { 0 };
         renderer.resize(self.width, self.height.saturating_sub(tab_bar_offset));
@@ -391,7 +391,7 @@ impl ApplicationHandler for App {
             )
             .expect("Failed to resize surface");
 
-        let renderer = Renderer::new(t.clone(), self.config.font_size);
+        let renderer = Renderer::new(t.clone(), self.config.font_size, self.config.padding);
 
         self.surface = Some(surface);
         self.renderer = Some(renderer);
@@ -782,6 +782,33 @@ impl ApplicationHandler for App {
                                         }
                                         row_y += row_spacing;
                                     }
+
+                                    // Padding row
+                                    if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 {
+                                        // - button
+                                        if mx >= value_x && mx <= value_x + 22 {
+                                            if self.config.padding > 0 {
+                                                self.config.padding -= 2;
+                                                self.config.save();
+                                                self.settings_click_flash = 6;
+                                                self.rebuild_renderer();
+                                            }
+                                            return;
+                                        }
+                                        // + button
+                                        let pad_str_len = format!("{}px", self.config.padding).len();
+                                        let plus_x = value_x + 30 + pad_str_len * renderer.cell_width + 8;
+                                        if mx >= plus_x && mx <= plus_x + 22 {
+                                            if self.config.padding < 48 {
+                                                self.config.padding += 2;
+                                                self.config.save();
+                                                self.settings_click_flash = 6;
+                                                self.rebuild_renderer();
+                                            }
+                                            return;
+                                        }
+                                    }
+                                    row_y += row_spacing;
 
                                     // Reinstall shortcuts button
                                     let btn_text = "Reinstall Shortcuts";
