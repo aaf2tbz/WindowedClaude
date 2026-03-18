@@ -42,9 +42,26 @@ jobs:
           name: WindowedClaude-macos
           path: WindowedClaude-macos
 
+  build-linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - run: cargo build --release --target x86_64-unknown-linux-gnu
+      - run: mv target/x86_64-unknown-linux-gnu/release/windowed-claude WindowedClaude-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WindowedClaude-linux
+          path: WindowedClaude-linux
+
   release:
     name: Create Release
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -55,4 +72,5 @@ jobs:
           files: |
             WindowedClaude-windows-x64/windowed-claude.exe
             WindowedClaude-macos/WindowedClaude-macos
+            WindowedClaude-linux/WindowedClaude-linux
           generate_release_notes: true
