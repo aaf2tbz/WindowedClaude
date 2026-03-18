@@ -135,14 +135,18 @@ impl Config {
         }
     }
 
-    /// Save config to disk
+    /// Save config to disk atomically (write to temp file, then rename).
+    /// Prevents config corruption from rapid saves or crashes mid-write.
     pub fn save(&self) {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path, json);
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let tmp = parent.join(".config.json.tmp");
+                if std::fs::write(&tmp, &json).is_ok() {
+                    let _ = std::fs::rename(&tmp, &path);
+                }
+            }
         }
     }
 
@@ -167,27 +171,24 @@ impl Config {
         }
     }
 
-    /// Cycle to next theme and persist
+    /// Cycle to next theme (caller handles persistence)
     pub fn cycle_theme(&mut self) {
         self.theme_id = theme::next_theme_id(&self.theme_id).to_string();
-        self.save();
     }
 
-    /// Toggle transparency on/off and persist
+    /// Toggle transparency on/off (caller handles persistence)
     pub fn toggle_transparency(&mut self) {
         self.transparent = !self.transparent;
         // Default to 85% if turning on for the first time at 100%
         if self.transparent && self.opacity >= 1.0 {
             self.opacity = 0.85;
         }
-        self.save();
     }
 
-    /// Adjust opacity by delta (clamped), persist
+    /// Adjust opacity by delta (clamped) (caller handles persistence)
     pub fn adjust_opacity(&mut self, delta: f32) {
         self.transparent = true;
         self.opacity = (self.opacity + delta).clamp(0.05, 1.0);
-        self.save();
     }
 
     fn config_path() -> PathBuf {
