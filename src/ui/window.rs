@@ -9,7 +9,7 @@ use softbuffer::Surface;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -17,6 +17,12 @@ use winit::window::{Window, WindowAttributes, WindowId};
 const INITIAL_WIDTH: u32 = 1000;
 const INITIAL_HEIGHT: u32 = 650;
 const TITLE: &str = "ClaudeTerm";
+const TITLE_BAR_HEIGHT: f64 = 36.0;
+
+/// Hit zones for title bar buttons (relative to right edge)
+const BTN_SIZE: f64 = 12.0;
+const BTN_SPACING: f64 = 28.0;
+const BTN_RIGHT_PAD: f64 = 20.0;
 
 struct App {
     config: Config,
@@ -28,6 +34,11 @@ struct App {
     modifiers: ModifiersState,
     width: u32,
     height: u32,
+    // Mouse state
+    cursor_x: f64,
+    cursor_y: f64,
+    mouse_pressed: bool,
+    maximized: bool,
 }
 
 impl App {
@@ -42,6 +53,10 @@ impl App {
             modifiers: ModifiersState::empty(),
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            mouse_pressed: false,
+            maximized: false,
         }
     }
 
@@ -82,6 +97,43 @@ impl App {
             window.request_redraw();
         }
     }
+
+    /// Check if a click position is within the title bar area
+    fn in_title_bar(&self, y: f64) -> bool {
+        y < TITLE_BAR_HEIGHT
+    }
+
+    /// Check which title bar button was clicked (if any)
+    fn title_bar_button(&self, x: f64, y: f64) -> Option<TitleBarButton> {
+        if !self.in_title_bar(y) {
+            return None;
+        }
+        let w = self.width as f64;
+        let right = w - BTN_RIGHT_PAD;
+
+        // Close button (rightmost)
+        if x >= right - BTN_SIZE && x <= right + BTN_SIZE {
+            return Some(TitleBarButton::Close);
+        }
+        // Maximize button
+        let max_x = right - BTN_SPACING;
+        if x >= max_x - BTN_SIZE && x <= max_x + BTN_SIZE {
+            return Some(TitleBarButton::Maximize);
+        }
+        // Minimize button
+        let min_x = right - BTN_SPACING * 2.0;
+        if x >= min_x - BTN_SIZE && x <= min_x + BTN_SIZE {
+            return Some(TitleBarButton::Minimize);
+        }
+        None
+    }
+}
+
+#[derive(Debug)]
+enum TitleBarButton {
+    Close,
+    Maximize,
+    Minimize,
 }
 
 impl ApplicationHandler for App {
@@ -115,10 +167,7 @@ impl ApplicationHandler for App {
             )
             .expect("Failed to resize surface");
 
-        // Create renderer
         let renderer = Renderer::new(t.clone(), self.config.font_size);
-
-        // Create terminal emulator sized to match renderer grid
         let terminal = Terminal::new(renderer.cols, renderer.rows);
 
         self.surface = Some(surface);
@@ -126,7 +175,6 @@ impl ApplicationHandler for App {
         self.terminal = Some(terminal);
         self.window = Some(window);
 
-        // Spawn the PTY process
         self.spawn_pty();
     }
 
@@ -154,7 +202,6 @@ impl ApplicationHandler for App {
                 }
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(self.width, self.height);
-                    // Resize the terminal grid to match
                     if let Some(terminal) = &mut self.terminal {
                         terminal.resize(renderer.cols, renderer.rows);
                     }
@@ -166,6 +213,81 @@ impl ApplicationHandler for App {
                 self.modifiers = new_modifiers.state();
             }
 
+            // --- Mouse: track cursor position ---
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_x = position.x;
+                self.cursor_y = position.y;
+            }
+
+            // --- Mouse: clicks for title bar buttons + drag ---
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                match state {
+                    ElementState::Pressed => {
+                        self.mouse_pressed = true;
+
+                        if self.in_title_bar(self.cursor_y) {
+                            // Check title bar buttons first
+                            match self.title_bar_button(self.cursor_x, self.cursor_y) {
+                                Some(TitleBarButton::Close) => {
+                                    event_loop.exit();
+                                    return;
+                                }
+                                Some(TitleBarButton::Maximize) => {
+                                    if let Some(window) = &self.window {
+                                        self.maximized = !self.maximized;
+                                        window.set_maximized(self.maximized);
+                                    }
+                                    return;
+                                }
+                                Some(TitleBarButton::Minimize) => {
+                                    if let Some(window) = &self.window {
+                                        window.set_minimized(true);
+                                    }
+                                    return;
+                                }
+                                None => {
+                                    // Title bar drag — initiate window move
+                                    if let Some(window) = &self.window {
+                                        let _ = window.drag_window();
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    ElementState::Released => {
+                        self.mouse_pressed = false;
+                    }
+                }
+            }
+
+            // --- Mouse: double-click title bar to maximize ---
+            WindowEvent::DoubleTapGesture { .. } => {
+                if self.in_title_bar(self.cursor_y) {
+                    if let Some(window) = &self.window {
+                        self.maximized = !self.maximized;
+                        window.set_maximized(self.maximized);
+                    }
+                }
+            }
+
+            // --- Mouse: scroll wheel for terminal scrollback ---
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as i32,
+                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as i32,
+                };
+
+                if let Some(terminal) = &self.terminal {
+                    if let Ok(mut term) = terminal.term.lock() {
+                        let scroll = alacritty_terminal::grid::Scroll::Delta(lines);
+                        term.scroll_display(scroll);
+                    }
+                }
+                self.request_redraw();
+            }
+
+            // --- Keyboard ---
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -182,6 +304,7 @@ impl ApplicationHandler for App {
                 // --- App hotkeys (Ctrl+Shift combos) ---
                 if ctrl && shift {
                     match &logical_key {
+                        // Ctrl+Shift+T — cycle theme
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("t") => {
                             self.config.cycle_theme();
                             let new_theme = self.current_theme().clone();
@@ -193,18 +316,33 @@ impl ApplicationHandler for App {
                             info!("Theme: {}", self.config.theme_id);
                             return;
                         }
+                        // Ctrl+Shift+O — toggle transparency
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("o") => {
                             self.config.toggle_transparency();
                             self.update_title();
                             self.request_redraw();
                             return;
                         }
+                        // Ctrl+Shift+C — copy selection (future: clipboard)
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("c") => {
+                            // TODO: Copy selected text to clipboard
+                            info!("Copy (not yet implemented)");
+                            return;
+                        }
+                        // Ctrl+Shift+V — paste from clipboard
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("v") => {
+                            // TODO: Read clipboard and send to PTY
+                            info!("Paste (not yet implemented)");
+                            return;
+                        }
+                        // Ctrl+Shift+= — increase opacity
                         Key::Character(c) if c.as_str() == "+" || c.as_str() == "=" => {
                             self.config.adjust_opacity(0.05);
                             self.update_title();
                             self.request_redraw();
                             return;
                         }
+                        // Ctrl+Shift+- — decrease opacity
                         Key::Character(c) if c.as_str() == "_" || c.as_str() == "-" => {
                             self.config.adjust_opacity(-0.05);
                             self.update_title();
