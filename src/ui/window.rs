@@ -73,6 +73,13 @@ struct App {
     settings_hover_row: i32,
     /// Flash timer for settings click feedback (counts down frames)
     settings_click_flash: u8,
+    // Keybinds overlay state
+    keybinds_open: bool,
+    keybinds_hover_row: i32,
+    keybinds_editing_index: i32,
+    keybinds_waiting_for_key: bool,
+    /// Working copy of keybinds being edited (not saved until user clicks Save)
+    keybinds_draft: crate::config::KeyBinds,
     // Installer channel — receives status updates from background thread
     install_rx: Option<std::sync::mpsc::Receiver<installer::InstallMsg>>,
 }
@@ -86,6 +93,7 @@ impl App {
         } else {
             AppPhase::Terminal
         };
+        let keybinds_draft = config.keybinds.clone();
         Self {
             config,
             phase,
@@ -108,6 +116,11 @@ impl App {
             settings_open: false,
             settings_hover_row: -1,
             settings_click_flash: 0,
+            keybinds_open: false,
+            keybinds_hover_row: -1,
+            keybinds_editing_index: -1,
+            keybinds_waiting_for_key: false,
+            keybinds_draft,
             install_rx: None,
         }
     }
@@ -329,6 +342,9 @@ impl App {
             if renderer.settings_pill.contains(x, y) {
                 return Some(TitleBarButton::SettingsPill);
             }
+            if renderer.keybinds_pill.contains(x, y) {
+                return Some(TitleBarButton::KeybindsPill);
+            }
         }
         None
     }
@@ -341,6 +357,7 @@ enum TitleBarButton {
     Minimize,
     ThemePill,
     SettingsPill,
+    KeybindsPill,
 }
 
 impl ApplicationHandler for App {
@@ -455,6 +472,31 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Track keybinds hover row
+                if self.keybinds_open {
+                    if let Some(renderer) = &self.renderer {
+                        let (px, py, pw, ph) = renderer.keybinds_panel_bounds(
+                            self.width as usize, self.height as usize,
+                        );
+                        let mx = position.x as usize;
+                        let my = position.y as usize;
+                        if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+                            let header_y = py + 16;
+                            let row_h = renderer.cell_height + 10;
+                            let sep_y = header_y + renderer.cell_height + 12 + renderer.cell_height + 4;
+                            let rows_start_y = sep_y + 6;
+                            if my >= rows_start_y {
+                                self.keybinds_hover_row = ((my - rows_start_y) / row_h) as i32;
+                            } else {
+                                self.keybinds_hover_row = -1;
+                            }
+                        } else {
+                            self.keybinds_hover_row = -1;
+                        }
+                    }
+                    self.request_redraw();
+                }
+
                 // Track settings hover row
                 if self.settings_open {
                     if let Some(renderer) = &self.renderer {
@@ -540,8 +582,21 @@ impl ApplicationHandler for App {
                                 }
                                 Some(TitleBarButton::SettingsPill) => {
                                     self.settings_open = !self.settings_open;
+                                    self.keybinds_open = false;
                                     self.request_redraw();
                                     info!("Settings: {}", if self.settings_open { "opened" } else { "closed" });
+                                    return;
+                                }
+                                Some(TitleBarButton::KeybindsPill) => {
+                                    self.keybinds_open = !self.keybinds_open;
+                                    self.settings_open = false;
+                                    if self.keybinds_open {
+                                        // Load fresh draft from config
+                                        self.keybinds_draft = self.config.keybinds.clone();
+                                        self.keybinds_editing_index = -1;
+                                        self.keybinds_waiting_for_key = false;
+                                    }
+                                    self.request_redraw();
                                     return;
                                 }
                                 None => {
@@ -550,6 +605,85 @@ impl ApplicationHandler for App {
                                         let _ = window.drag_window();
                                     }
                                     return;
+                                }
+                            }
+                        } else if self.keybinds_open {
+                            // Keybinds overlay click handling
+                            if let Some(renderer) = &self.renderer {
+                                let (px, py, pw, ph) = renderer.keybinds_panel_bounds(
+                                    self.width as usize, self.height as usize,
+                                );
+                                let mx = self.cursor_x as usize;
+                                let my = self.cursor_y as usize;
+
+                                // Close X
+                                if mx >= px + pw - 30 && mx <= px + pw - 10
+                                    && my >= py + 8 && my <= py + 30 {
+                                    self.keybinds_open = false;
+                                    self.request_redraw();
+                                    return;
+                                }
+
+                                if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+                                    let header_y = py + 16;
+                                    let row_h = renderer.cell_height + 10;
+                                    let sep_y = header_y + renderer.cell_height + 12 + renderer.cell_height + 4;
+                                    let rows_start_y = sep_y + 6;
+                                    let num_actions = crate::config::KEYBIND_ACTIONS.len();
+
+                                    // Check if clicking a row
+                                    if my >= rows_start_y && my < rows_start_y + num_actions * row_h {
+                                        let row_idx = (my - rows_start_y) / row_h;
+                                        if row_idx < num_actions {
+                                            self.keybinds_editing_index = row_idx as i32;
+                                            self.keybinds_waiting_for_key = true;
+                                            self.request_redraw();
+                                            return;
+                                        }
+                                    }
+
+                                    // Check bottom buttons
+                                    let btn_y = rows_start_y + num_actions * row_h + 12;
+                                    let btn_h = renderer.cell_height + 10;
+
+                                    if my >= btn_y && my <= btn_y + btn_h {
+                                        // Save button
+                                        let save_w = "Save".len() * renderer.cell_width + 20;
+                                        let save_x = px + 20;
+                                        if mx >= save_x && mx <= save_x + save_w {
+                                            self.config.keybinds = self.keybinds_draft.clone();
+                                            self.config.save();
+                                            self.keybinds_open = false;
+                                            info!("Keybinds saved");
+                                            self.request_redraw();
+                                            return;
+                                        }
+
+                                        // Discard button
+                                        let discard_w = "Discard".len() * renderer.cell_width + 20;
+                                        let discard_x = save_x + save_w + 12;
+                                        if mx >= discard_x && mx <= discard_x + discard_w {
+                                            self.keybinds_draft = self.config.keybinds.clone();
+                                            self.keybinds_open = false;
+                                            info!("Keybinds discarded");
+                                            self.request_redraw();
+                                            return;
+                                        }
+
+                                        // Reset button
+                                        let reset_w = "Reset to Defaults".len() * renderer.cell_width + 20;
+                                        let reset_x = discard_x + discard_w + 12;
+                                        if mx >= reset_x && mx <= reset_x + reset_w {
+                                            self.keybinds_draft.reset_all();
+                                            info!("Keybinds reset to defaults");
+                                            self.request_redraw();
+                                            return;
+                                        }
+                                    }
+                                } else {
+                                    // Click outside panel
+                                    self.keybinds_open = false;
+                                    self.request_redraw();
                                 }
                             }
                         } else if self.settings_open {
@@ -792,7 +926,83 @@ impl ApplicationHandler for App {
                         self.request_redraw();
                         return;
                     }
-                    // Block all other keyboard input while settings is open
+                    return;
+                }
+
+                // Keybinds overlay keyboard handling
+                if self.keybinds_open {
+                    if self.keybinds_waiting_for_key {
+                        // Escape cancels editing
+                        if matches!(&logical_key, Key::Named(NamedKey::Escape)) {
+                            self.keybinds_waiting_for_key = false;
+                            self.keybinds_editing_index = -1;
+                            self.request_redraw();
+                            return;
+                        }
+
+                        // Capture the key combo
+                        let ctrl = self.modifiers.control_key();
+                        let shift_mod = self.modifiers.shift_key();
+
+                        let key_name = match &logical_key {
+                            Key::Character(c) => {
+                                let s = c.as_str().to_uppercase();
+                                Some(s)
+                            }
+                            Key::Named(NamedKey::Tab) => Some("Tab".to_string()),
+                            Key::Named(NamedKey::Enter) => Some("Enter".to_string()),
+                            Key::Named(NamedKey::Backspace) => Some("Backspace".to_string()),
+                            Key::Named(NamedKey::Delete) => Some("Delete".to_string()),
+                            Key::Named(NamedKey::ArrowUp) => Some("Up".to_string()),
+                            Key::Named(NamedKey::ArrowDown) => Some("Down".to_string()),
+                            Key::Named(NamedKey::ArrowLeft) => Some("Left".to_string()),
+                            Key::Named(NamedKey::ArrowRight) => Some("Right".to_string()),
+                            Key::Named(NamedKey::Home) => Some("Home".to_string()),
+                            Key::Named(NamedKey::End) => Some("End".to_string()),
+                            Key::Named(NamedKey::PageUp) => Some("PageUp".to_string()),
+                            Key::Named(NamedKey::PageDown) => Some("PageDown".to_string()),
+                            Key::Named(NamedKey::F1) => Some("F1".to_string()),
+                            Key::Named(NamedKey::F2) => Some("F2".to_string()),
+                            Key::Named(NamedKey::F3) => Some("F3".to_string()),
+                            Key::Named(NamedKey::F4) => Some("F4".to_string()),
+                            Key::Named(NamedKey::F5) => Some("F5".to_string()),
+                            Key::Named(NamedKey::F6) => Some("F6".to_string()),
+                            Key::Named(NamedKey::F7) => Some("F7".to_string()),
+                            Key::Named(NamedKey::F8) => Some("F8".to_string()),
+                            Key::Named(NamedKey::F9) => Some("F9".to_string()),
+                            Key::Named(NamedKey::F10) => Some("F10".to_string()),
+                            Key::Named(NamedKey::F11) => Some("F11".to_string()),
+                            Key::Named(NamedKey::F12) => Some("F12".to_string()),
+                            _ => None,
+                        };
+
+                        if let Some(key) = key_name {
+                            // Build combo string
+                            let mut combo = String::new();
+                            if ctrl { combo.push_str("Ctrl+"); }
+                            if shift_mod { combo.push_str("Shift+"); }
+                            combo.push_str(&key);
+
+                            // Apply to draft
+                            let idx = self.keybinds_editing_index as usize;
+                            if idx < crate::config::KEYBIND_ACTIONS.len() {
+                                let action_id = crate::config::KEYBIND_ACTIONS[idx].0;
+                                self.keybinds_draft.set(action_id, &combo);
+                                info!("Keybind set: {} = {}", action_id, combo);
+                            }
+                            self.keybinds_waiting_for_key = false;
+                            self.keybinds_editing_index = -1;
+                            self.request_redraw();
+                        }
+                        return;
+                    }
+
+                    // Not waiting for key — Escape closes overlay
+                    if matches!(&logical_key, Key::Named(NamedKey::Escape)) {
+                        self.keybinds_open = false;
+                        self.request_redraw();
+                        return;
+                    }
                     return;
                 }
 
@@ -1153,10 +1363,21 @@ impl ApplicationHandler for App {
                                             &mut buffer, w, h, &self.config,
                                             self.settings_hover_row, self.settings_click_flash,
                                         );
-                                        // Decay click flash
                                         if self.settings_click_flash > 0 {
                                             self.settings_click_flash -= 1;
                                         }
+                                    }
+
+                                    // Keybinds overlay (on top of terminal)
+                                    if self.keybinds_open {
+                                        renderer.render_keybinds_overlay(
+                                            &mut buffer, w, h,
+                                            &self.config.keybinds,
+                                            &self.keybinds_draft,
+                                            self.keybinds_editing_index,
+                                            self.keybinds_hover_row,
+                                            self.keybinds_waiting_for_key,
+                                        );
                                     }
 
                                     let _ = buffer.present();

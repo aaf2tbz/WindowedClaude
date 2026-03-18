@@ -45,6 +45,8 @@ pub struct Renderer {
     pub theme_pill: ThemePillBounds,
     /// Bounds of the settings pill in the title bar
     pub settings_pill: PillBounds,
+    /// Bounds of the keybinds pill in the title bar
+    pub keybinds_pill: PillBounds,
     pub cell_width: usize,
     pub cell_height: usize,
     pub cols: usize,
@@ -87,6 +89,7 @@ impl Renderer {
             theme,
             theme_pill: ThemePillBounds::default(),
             settings_pill: PillBounds::default(),
+            keybinds_pill: PillBounds::default(),
             cell_width,
             cell_height,
             cols: 120,
@@ -465,6 +468,25 @@ impl Renderer {
             y: settings_y,
             w: settings_w,
             h: settings_h,
+        };
+
+        // Keybinds pill (after settings pill)
+        let kb_text = "Keybinds";
+        let kb_text_w = kb_text.len() * self.cell_width;
+        let kb_w = kb_text_w + pill_pad_h * 2;
+        let kb_h = settings_h;
+        let kb_x = settings_x + settings_w + 10;
+        let kb_y = settings_y;
+
+        Self::fill_rounded_rect(buf, stride, kb_x, kb_y, kb_w, kb_h, kb_h / 2, settings_bg);
+        Self::stroke_rounded_rect(buf, stride, kb_x, kb_y, kb_w, kb_h, kb_h / 2, 1, self.theme.title_bar_text);
+        self.render_string(buf, stride, kb_x + pill_pad_h, kb_y + pill_pad_v, kb_text, self.theme.title_bar_text);
+
+        self.keybinds_pill = PillBounds {
+            x: kb_x,
+            y: kb_y,
+            w: kb_w,
+            h: kb_h,
         };
 
         // Window buttons (right side — traffic light dots)
@@ -965,6 +987,184 @@ impl Renderer {
     pub fn settings_panel_bounds(&self, buf_width: usize, buf_height: usize) -> (usize, usize, usize, usize) {
         let panel_w = 420usize;
         let panel_h = 320usize;
+        let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
+        let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
+        (panel_x, panel_y, panel_w, panel_h)
+    }
+
+    // -----------------------------------------------------------------------
+    // Keybinds overlay
+    // -----------------------------------------------------------------------
+
+    /// Render the keybinds configuration overlay
+    pub fn render_keybinds_overlay(
+        &mut self,
+        buf: &mut [u32],
+        buf_width: usize,
+        buf_height: usize,
+        keybinds: &crate::config::KeyBinds,
+        editing_keybinds: &crate::config::KeyBinds,
+        editing_index: i32,
+        hover_row: i32,
+        waiting_for_key: bool,
+    ) {
+        // Dark overlay
+        let overlay = Color::rgba(0, 0, 0, 160);
+        for i in 0..buf.len() {
+            buf[i] = blend(overlay, 160, buf[i]);
+        }
+
+        // Larger panel for keybinds
+        let panel_w = 520usize;
+        let num_actions = crate::config::KEYBIND_ACTIONS.len();
+        let row_h = self.cell_height + 10;
+        let panel_h = 80 + num_actions * row_h + 60; // header + rows + buttons
+        let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
+        let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
+        let panel_r = 14usize;
+
+        // Panel bg
+        let panel_bg = Color::rgb(
+            self.theme.bg.r.saturating_add(15),
+            self.theme.bg.g.saturating_add(15),
+            self.theme.bg.b.saturating_add(15),
+        );
+        Self::fill_rounded_rect(buf, buf_width, panel_x, panel_y, panel_w, panel_h, panel_r, panel_bg);
+        Self::stroke_rounded_rect(buf, buf_width, panel_x, panel_y, panel_w, panel_h, panel_r, 1, self.theme.window_border);
+
+        // Header
+        let header_y = panel_y + 16;
+        self.render_string(buf, buf_width, panel_x + 20, header_y, "Keybinds", self.theme.cursor);
+
+        // Close X
+        self.render_string(buf, buf_width, panel_x + panel_w - 30, panel_y + 12, "X", self.theme.fg);
+
+        // Column headers
+        let col_action = panel_x + 20;
+        let col_default = panel_x + 180;
+        let col_current = panel_x + 340;
+        let header_row_y = header_y + self.cell_height + 12;
+        let dim = Color::rgb(
+            self.theme.fg.r / 2 + 40,
+            self.theme.fg.g / 2 + 40,
+            self.theme.fg.b / 2 + 40,
+        );
+        self.render_string(buf, buf_width, col_action, header_row_y, "Action", dim);
+        self.render_string(buf, buf_width, col_default, header_row_y, "Default", dim);
+        self.render_string(buf, buf_width, col_current, header_row_y, "Current", dim);
+
+        // Separator line
+        let sep_y = header_row_y + self.cell_height + 4;
+        Self::fill_rect(buf, buf_width, panel_x + 16, sep_y, panel_w - 32, 1, self.theme.window_border);
+
+        // Rows
+        let rows_start_y = sep_y + 6;
+        let hover_bg = Color::rgb(
+            panel_bg.r.saturating_add(self.theme.cursor.r / 10),
+            panel_bg.g.saturating_add(self.theme.cursor.g / 10),
+            panel_bg.b.saturating_add(self.theme.cursor.b / 10),
+        );
+
+        for (i, (id, name, default_combo)) in crate::config::KEYBIND_ACTIONS.iter().enumerate() {
+            let ry = rows_start_y + i * row_h;
+            let row_idx = i as i32;
+
+            // Hover highlight
+            if hover_row == row_idx {
+                Self::fill_rounded_rect(buf, buf_width, panel_x + 8, ry.saturating_sub(2), panel_w - 16, row_h, 4, hover_bg);
+            }
+
+            // Editing row highlight
+            if editing_index == row_idx {
+                let edit_bg = Color::rgb(
+                    panel_bg.r.saturating_add(self.theme.cursor.r / 6),
+                    panel_bg.g.saturating_add(self.theme.cursor.g / 6),
+                    panel_bg.b.saturating_add(self.theme.cursor.b / 6),
+                );
+                Self::fill_rounded_rect(buf, buf_width, panel_x + 8, ry.saturating_sub(2), panel_w - 16, row_h, 4, edit_bg);
+            }
+
+            // Action name
+            self.render_string(buf, buf_width, col_action, ry, name, self.theme.fg);
+
+            // Default value
+            self.render_string(buf, buf_width, col_default, ry, default_combo, dim);
+
+            // Current value
+            let current = editing_keybinds.get(id);
+            let is_modified = current != *default_combo;
+            let is_editing = editing_index == row_idx && waiting_for_key;
+
+            if is_editing {
+                // Show blinking prompt
+                let prompt_color = self.theme.cursor;
+                self.render_string(buf, buf_width, col_current, ry, "Press keys...", prompt_color);
+            } else {
+                let current_color = if is_modified {
+                    self.theme.cursor // Accent for modified
+                } else {
+                    self.theme.fg
+                };
+                self.render_string(buf, buf_width, col_current, ry, current, current_color);
+            }
+        }
+
+        // Bottom buttons
+        let btn_y = rows_start_y + num_actions * row_h + 12;
+        let btn_h = self.cell_height + 10;
+        let btn_r = 5usize;
+
+        // Save button
+        let save_text = "Save";
+        let save_w = save_text.len() * self.cell_width + 20;
+        let save_x = panel_x + 20;
+        let save_bg = Color::rgb(
+            self.theme.ansi[2].r / 3,
+            self.theme.ansi[2].g / 3,
+            self.theme.ansi[2].b / 3,
+        );
+        Self::fill_rounded_rect(buf, buf_width, save_x, btn_y, save_w, btn_h, btn_r, save_bg);
+        Self::stroke_rounded_rect(buf, buf_width, save_x, btn_y, save_w, btn_h, btn_r, 1, self.theme.ansi[2]);
+        self.render_string(buf, buf_width, save_x + 10, btn_y + 5, save_text, self.theme.ansi[2]);
+
+        // Discard button
+        let discard_text = "Discard";
+        let discard_w = discard_text.len() * self.cell_width + 20;
+        let discard_x = save_x + save_w + 12;
+        Self::fill_rounded_rect(buf, buf_width, discard_x, btn_y, discard_w, btn_h, btn_r, self.theme.window_border);
+        Self::stroke_rounded_rect(buf, buf_width, discard_x, btn_y, discard_w, btn_h, btn_r, 1, self.theme.fg);
+        self.render_string(buf, buf_width, discard_x + 10, btn_y + 5, discard_text, self.theme.fg);
+
+        // Reset to Defaults button
+        let reset_text = "Reset to Defaults";
+        let reset_w = reset_text.len() * self.cell_width + 20;
+        let reset_x = discard_x + discard_w + 12;
+        let reset_bg = Color::rgb(
+            self.theme.ansi[1].r / 4,
+            self.theme.ansi[1].g / 4,
+            self.theme.ansi[1].b / 4,
+        );
+        Self::fill_rounded_rect(buf, buf_width, reset_x, btn_y, reset_w, btn_h, btn_r, reset_bg);
+        Self::stroke_rounded_rect(buf, buf_width, reset_x, btn_y, reset_w, btn_h, btn_r, 1, self.theme.ansi[1]);
+        self.render_string(buf, buf_width, reset_x + 10, btn_y + 5, reset_text, self.theme.ansi[1]);
+
+        // Hint
+        let hint = "Click a row to edit, press Escape to cancel";
+        let hint_y = panel_y + panel_h - self.cell_height - 10;
+        let hint_color = Color::rgb(
+            self.theme.fg.r / 2 + 30,
+            self.theme.fg.g / 2 + 30,
+            self.theme.fg.b / 2 + 30,
+        );
+        self.render_string(buf, buf_width, panel_x + 20, hint_y, hint, hint_color);
+    }
+
+    /// Get keybinds panel bounds for hit testing
+    pub fn keybinds_panel_bounds(&self, buf_width: usize, buf_height: usize) -> (usize, usize, usize, usize) {
+        let panel_w = 520usize;
+        let num_actions = crate::config::KEYBIND_ACTIONS.len();
+        let row_h = self.cell_height + 10;
+        let panel_h = 80 + num_actions * row_h + 60;
         let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
         let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
         (panel_x, panel_y, panel_w, panel_h)
