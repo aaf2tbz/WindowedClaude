@@ -109,13 +109,19 @@ impl Renderer {
 
     fn load_font(bold: bool) -> Font {
         let settings = FontSettings::default();
-        // Both use regular for now — add JetBrainsMono-Bold.ttf later
-        let _ = bold;
-        Font::from_bytes(
-            include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf") as &[u8],
-            settings,
-        )
-        .expect("Failed to load embedded font")
+        if bold {
+            Font::from_bytes(
+                include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf") as &[u8],
+                settings,
+            )
+            .expect("Failed to load embedded bold font")
+        } else {
+            Font::from_bytes(
+                include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf") as &[u8],
+                settings,
+            )
+            .expect("Failed to load embedded font")
+        }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -503,10 +509,11 @@ impl Renderer {
 
     /// Render a string at pixel coordinates
     pub fn render_string(&mut self, buf: &mut [u32], stride: usize, x: usize, y: usize, text: &str, color: Color) {
+        let bold = self.theme.bold_ui;
         let mut cx = x;
         for ch in text.chars() {
-            self.rasterize_glyph(ch, false);
-            if let Some(glyph) = self.glyph_cache.get(&(ch, false)) {
+            self.rasterize_glyph(ch, bold);
+            if let Some(glyph) = self.glyph_cache.get(&(ch, bold)) {
                 // Clone bitmap data to avoid borrow conflict
                 let bmp = GlyphBitmap {
                     width: glyph.width,
