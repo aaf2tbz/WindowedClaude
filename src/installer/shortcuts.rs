@@ -3,10 +3,10 @@ use log::info;
 use std::path::PathBuf;
 
 /// Embedded icon files for shortcuts (compiled into the binary)
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const ICON_ICNS: &[u8] = include_bytes!("../../assets/icon.icns");
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
 
 /// Create Start Menu shortcuts (Windows only)
@@ -45,7 +45,8 @@ pub fn create_desktop_shortcut() -> Result<()> {
         let dir = desktop.join("WindowedClaude");
         std::fs::create_dir_all(&dir)?;
 
-        if cfg!(windows) {
+        #[cfg(windows)]
+        {
             // Windows: .lnk files
             let lnk = dir.join("WindowedClaude.lnk");
             create_lnk(&lnk, &exe_str, "", "WindowedClaude — Claude Code Terminal")?;
@@ -59,11 +60,15 @@ pub fn create_desktop_shortcut() -> Result<()> {
                 "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
             )?;
             info!("Created Desktop auto-accept shortcut: {}", auto_lnk.display());
-        } else if cfg!(target_os = "macos") {
+        }
+        #[cfg(target_os = "macos")]
+        {
             // macOS: .app bundles — launches without Terminal.app
             create_macos_app_bundle(&dir, "WindowedClaude", &exe_str, "")?;
             create_macos_app_bundle(&dir, "WindowedClaude (Auto-Accept)", &exe_str, "--auto-accept")?;
-        } else {
+        }
+        #[cfg(target_os = "linux")]
+        {
             // Linux: .desktop files with Terminal=false
             create_linux_desktop_entry(&dir, "WindowedClaude", &exe_str, "")?;
             create_linux_desktop_entry(&dir, "WindowedClaude (Auto-Accept)", &exe_str, "--auto-accept")?;
@@ -74,6 +79,7 @@ pub fn create_desktop_shortcut() -> Result<()> {
 
 /// Create a macOS .app bundle that launches the binary without Terminal.app.
 /// Structure: Name.app/Contents/MacOS/launcher (bash script that execs the real binary)
+#[cfg(target_os = "macos")]
 fn create_macos_app_bundle(
     parent_dir: &std::path::Path,
     name: &str,
@@ -138,6 +144,7 @@ fn create_macos_app_bundle(
 }
 
 /// Create a Linux .desktop file that launches without a terminal.
+#[cfg(target_os = "linux")]
 fn create_linux_desktop_entry(
     parent_dir: &std::path::Path,
     name: &str,
