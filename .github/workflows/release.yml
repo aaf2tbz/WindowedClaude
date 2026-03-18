@@ -32,15 +32,18 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: cargo build --release --target aarch64-apple-darwin
       - run: cargo build --release --target x86_64-apple-darwin
-      - run: |
+      - name: Create universal binary and zip
+        run: |
           lipo -create \
             target/aarch64-apple-darwin/release/windowed-claude \
             target/x86_64-apple-darwin/release/windowed-claude \
-            -output WindowedClaude-macos
+            -output WindowedClaude
+          chmod +x WindowedClaude
+          zip WindowedClaude-macos.zip WindowedClaude
       - uses: actions/upload-artifact@v4
         with:
           name: WindowedClaude-macos
-          path: WindowedClaude-macos
+          path: WindowedClaude-macos.zip
 
   build-linux:
     name: Linux x64
@@ -53,11 +56,15 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
       - run: cargo build --release --target x86_64-unknown-linux-gnu
-      - run: mv target/x86_64-unknown-linux-gnu/release/windowed-claude WindowedClaude-linux
+      - name: Package
+        run: |
+          mv target/x86_64-unknown-linux-gnu/release/windowed-claude WindowedClaude
+          chmod +x WindowedClaude
+          tar czf WindowedClaude-linux.tar.gz WindowedClaude
       - uses: actions/upload-artifact@v4
         with:
           name: WindowedClaude-linux
-          path: WindowedClaude-linux
+          path: WindowedClaude-linux.tar.gz
 
   release:
     name: Create Release
@@ -71,6 +78,6 @@ jobs:
         with:
           files: |
             WindowedClaude-windows-x64/windowed-claude.exe
-            WindowedClaude-macos/WindowedClaude-macos
-            WindowedClaude-linux/WindowedClaude-linux
+            WindowedClaude-macos/WindowedClaude-macos.zip
+            WindowedClaude-linux/WindowedClaude-linux.tar.gz
           generate_release_notes: true

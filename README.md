@@ -10,13 +10,13 @@ Built in Rust. No GPU. No Electron. Just pixels.
 
 Grab the latest from [Releases](https://github.com/aaf2tbz/WindowedClaude/releases):
 
-| Platform | File |
-|----------|------|
-| Windows x64 | `windowed-claude.exe` |
-| macOS (Universal) | `WindowedClaude-macos` |
-| Linux x64 | `WindowedClaude-linux` |
+| Platform | File | Notes |
+|----------|------|-------|
+| Windows x64 | `windowed-claude.exe` | Double-click and go |
+| macOS (Universal) | `WindowedClaude-macos.zip` | Unzip, then `./WindowedClaude` |
+| Linux x64 | `WindowedClaude-linux.tar.gz` | Extract, then `./WindowedClaude` |
 
-Double-click and go. On Windows, first launch auto-installs Git + Claude CLI.
+On Windows, first launch auto-installs Git + Claude CLI. On macOS/Linux, install [Claude CLI](https://claude.ai) first.
 
 ---
 
