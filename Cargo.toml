@@ -1,0 +1,50 @@
+[package]
+name = "claude-term"
+version = "0.1.0"
+edition = "2021"
+description = "A themed Windows terminal for Claude Code — one-click install, zero config"
+license = "MIT"
+
+[dependencies]
+# Window + pixel buffer (no GL needed)
+winit = "0.30"
+softbuffer = "0.4"
+
+# Font rasterization (pure Rust, no system deps)
+fontdue = "0.9"
+
+# Terminal emulation (Alacritty's core)
+alacritty_terminal = "0.25"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# System utilities
+dirs = "6"
+reqwest = { version = "0.12", features = ["blocking", "stream"] }
+zip = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+thiserror = "2"
+
+# Windows-specific
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows = { version = "0.58", features = [
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+    "Win32_Foundation",
+] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true
+strip = true
+codegen-units = 1
