@@ -97,6 +97,19 @@ impl App {
         theme::theme_by_id(&self.config.theme_id)
     }
 
+    /// Rebuild the renderer (e.g., after font size change) and resize terminal to match
+    fn rebuild_renderer(&mut self) {
+        let theme = self.current_theme().clone();
+        let mut renderer = Renderer::new(theme, self.config.font_size);
+        renderer.resize(self.width, self.height);
+        if let Some(terminal) = &mut self.terminal {
+            terminal.resize(renderer.cols, renderer.rows);
+        }
+        self.renderer = Some(renderer);
+        self.request_redraw();
+        info!("Font size: {}", self.config.font_size);
+    }
+
     fn request_redraw(&self) {
         if let Some(window) = &self.window {
             window.request_redraw();
@@ -460,6 +473,34 @@ impl ApplicationHandler for App {
                             self.config.adjust_opacity(-0.05);
                             self.update_title();
                             self.request_redraw();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // --- Ctrl-only hotkeys (font size) ---
+                if ctrl && !shift {
+                    match &logical_key {
+                        // Ctrl+= — increase font size
+                        Key::Character(c) if c.as_str() == "=" || c.as_str() == "+" => {
+                            self.config.font_size = (self.config.font_size + 1.0).min(48.0);
+                            self.config.save();
+                            self.rebuild_renderer();
+                            return;
+                        }
+                        // Ctrl+- — decrease font size
+                        Key::Character(c) if c.as_str() == "-" => {
+                            self.config.font_size = (self.config.font_size - 1.0).max(8.0);
+                            self.config.save();
+                            self.rebuild_renderer();
+                            return;
+                        }
+                        // Ctrl+0 — reset font size to default
+                        Key::Character(c) if c.as_str() == "0" => {
+                            self.config.font_size = 14.0;
+                            self.config.save();
+                            self.rebuild_renderer();
                             return;
                         }
                         _ => {}
