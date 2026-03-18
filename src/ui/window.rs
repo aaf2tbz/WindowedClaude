@@ -86,7 +86,7 @@ impl App {
             .unwrap_or_else(installer::git_bash_path);
         let claude_cli = installer::claude_cli_path();
 
-        match PtySession::spawn(git_bash, claude_cli) {
+        match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept) {
             Ok(session) => {
                 info!("PTY session spawned");
                 self.pty = Some(session);
@@ -100,12 +100,14 @@ impl App {
     fn update_title(&self) {
         if let Some(window) = &self.window {
             let t = self.current_theme();
-            let opacity_str = if self.config.transparent {
-                format!(" | {:.0}%", self.config.opacity * 100.0)
-            } else {
-                String::new()
-            };
-            window.set_title(&format!("{} — {}{}", TITLE, t.name, opacity_str));
+            let mut extras = String::new();
+            if self.config.auto_accept {
+                extras.push_str(" | AUTO");
+            }
+            if self.config.transparent {
+                extras.push_str(&format!(" | {:.0}%", self.config.opacity * 100.0));
+            }
+            window.set_title(&format!("{} — {}{}", TITLE, t.name, extras));
         }
     }
 

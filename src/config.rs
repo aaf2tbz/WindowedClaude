@@ -17,6 +17,9 @@ pub struct Config {
     pub transparent: bool,
     /// Custom Git Bash path override
     pub git_bash_path: Option<PathBuf>,
+    /// Runtime flag: launch Claude with --dangerously-skip-permissions
+    #[serde(skip)]
+    pub auto_accept: bool,
 }
 
 impl Default for Config {
@@ -28,6 +31,7 @@ impl Default for Config {
             opacity: 1.0,
             transparent: false,
             git_bash_path: None,
+            auto_accept: false,
         }
     }
 }

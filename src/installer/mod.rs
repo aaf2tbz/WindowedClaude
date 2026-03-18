@@ -88,6 +88,10 @@ pub fn run_first_time_setup() -> Result<()> {
         if let Err(e) = shortcuts::create_start_menu_shortcut() {
             log::warn!("Start Menu shortcut failed (non-fatal): {}", e);
         }
+        // Register right-click "Run with Auto-Accept" context menu on the exe
+        if let Err(e) = shortcuts::register_context_menu() {
+            log::warn!("Context menu registration failed (non-fatal): {}", e);
+        }
     }
 
     // Mark as installed

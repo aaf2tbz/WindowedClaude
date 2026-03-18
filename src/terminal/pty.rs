@@ -15,17 +15,26 @@ pub struct PtySession {
 }
 
 impl PtySession {
-    /// Spawn a new PTY session running Claude inside Git Bash
-    pub fn spawn(git_bash: PathBuf, claude_exe: PathBuf) -> Result<Self> {
+    /// Spawn a new PTY session running Claude inside Git Bash.
+    /// If `auto_accept` is true, passes --dangerously-skip-permissions to Claude.
+    pub fn spawn(git_bash: PathBuf, claude_exe: PathBuf, auto_accept: bool) -> Result<Self> {
         let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>();
         let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
 
         info!("Spawning Git Bash at: {}", git_bash.display());
         info!("Claude CLI at: {}", claude_exe.display());
 
+        // Build the Claude command with optional flags
+        let claude_cmd = if auto_accept {
+            info!("Auto-accept mode enabled");
+            format!("\"{}\" --dangerously-skip-permissions", claude_exe.display())
+        } else {
+            format!("\"{}\"", claude_exe.display())
+        };
+
         // Spawn Git Bash with Claude as the initial command
         let mut child = Command::new(&git_bash)
-            .args(["-c", &format!("\"{}\"", claude_exe.display())])
+            .args(["-c", &claude_cmd])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
