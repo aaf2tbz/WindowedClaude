@@ -4,6 +4,7 @@ use crate::terminal::{PtySession, Terminal};
 use crate::ui::renderer::Renderer;
 use crate::ui::theme;
 use anyhow::Result;
+use arboard::Clipboard;
 use log::info;
 use softbuffer::Surface;
 use std::num::NonZeroU32;
@@ -12,7 +13,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 const INITIAL_WIDTH: u32 = 1000;
 const INITIAL_HEIGHT: u32 = 650;
@@ -101,6 +102,30 @@ impl App {
     /// Check if a click position is within the title bar area
     fn in_title_bar(&self, y: f64) -> bool {
         y < TITLE_BAR_HEIGHT
+    }
+
+    /// Check if cursor is on a resize edge (5px border)
+    fn resize_direction(&self, x: f64, y: f64) -> Option<ResizeDirection> {
+        const EDGE: f64 = 5.0;
+        let w = self.width as f64;
+        let h = self.height as f64;
+
+        let left = x < EDGE;
+        let right = x > w - EDGE;
+        let top = y < EDGE;
+        let bottom = y > h - EDGE;
+
+        match (left, right, top, bottom) {
+            (true, _, true, _) => Some(ResizeDirection::NorthWest),
+            (_, true, true, _) => Some(ResizeDirection::NorthEast),
+            (true, _, _, true) => Some(ResizeDirection::SouthWest),
+            (_, true, _, true) => Some(ResizeDirection::SouthEast),
+            (true, _, _, _) => Some(ResizeDirection::West),
+            (_, true, _, _) => Some(ResizeDirection::East),
+            (_, _, true, _) => Some(ResizeDirection::North),
+            (_, _, _, true) => Some(ResizeDirection::South),
+            _ => None,
+        }
     }
 
     /// Check which title bar button was clicked (if any)
@@ -213,10 +238,21 @@ impl ApplicationHandler for App {
                 self.modifiers = new_modifiers.state();
             }
 
-            // --- Mouse: track cursor position ---
+            // --- Mouse: track cursor position + resize cursor icon ---
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_x = position.x;
                 self.cursor_y = position.y;
+
+                // Update cursor icon based on edge proximity
+                if let Some(window) = &self.window {
+                    if let Some(dir) = self.resize_direction(position.x, position.y) {
+                        window.set_cursor(CursorIcon::from(dir));
+                    } else if self.in_title_bar(position.y) {
+                        window.set_cursor(CursorIcon::Default);
+                    } else {
+                        window.set_cursor(CursorIcon::Text);
+                    }
+                }
             }
 
             // --- Mouse: clicks for title bar buttons + drag ---
@@ -224,6 +260,14 @@ impl ApplicationHandler for App {
                 match state {
                     ElementState::Pressed => {
                         self.mouse_pressed = true;
+
+                        // Check resize edges first (takes priority)
+                        if let Some(dir) = self.resize_direction(self.cursor_x, self.cursor_y) {
+                            if let Some(window) = &self.window {
+                                let _ = window.drag_resize_window(dir);
+                            }
+                            return;
+                        }
 
                         if self.in_title_bar(self.cursor_y) {
                             // Check title bar buttons first
@@ -323,16 +367,35 @@ impl ApplicationHandler for App {
                             self.request_redraw();
                             return;
                         }
-                        // Ctrl+Shift+C — copy selection (future: clipboard)
+                        // Ctrl+Shift+C — copy selection to clipboard
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("c") => {
-                            // TODO: Copy selected text to clipboard
-                            info!("Copy (not yet implemented)");
+                            if let Some(terminal) = &self.terminal {
+                                if let Ok(term) = terminal.term.lock() {
+                                    // Get selected text from terminal
+                                    let text = term.selection_to_string();
+                                    if let Some(text) = text {
+                                        if let Ok(mut clip) = Clipboard::new() {
+                                            let _ = clip.set_text(&text);
+                                            info!("Copied {} chars", text.len());
+                                        }
+                                    }
+                                }
+                            }
                             return;
                         }
-                        // Ctrl+Shift+V — paste from clipboard
+                        // Ctrl+Shift+V — paste from clipboard into terminal
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("v") => {
-                            // TODO: Read clipboard and send to PTY
-                            info!("Paste (not yet implemented)");
+                            if let Ok(mut clip) = Clipboard::new() {
+                                if let Ok(text) = clip.get_text() {
+                                    if let Some(pty) = &self.pty {
+                                        // Bracket paste mode: wrap in escape sequences
+                                        let _ = pty.write(b"\x1b[200~");
+                                        let _ = pty.write(text.as_bytes());
+                                        let _ = pty.write(b"\x1b[201~");
+                                        info!("Pasted {} chars", text.len());
+                                    }
+                                }
+                            }
                             return;
                         }
                         // Ctrl+Shift+= — increase opacity
