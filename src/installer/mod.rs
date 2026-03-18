@@ -1,6 +1,7 @@
 mod git;
 mod claude;
 pub mod shortcuts;
+pub mod uninstall;
 
 use anyhow::Result;
 use log::info;
@@ -92,17 +93,27 @@ pub fn run_first_time_setup_with_progress(tx: &Sender<InstallMsg>) -> Result<()>
     std::fs::create_dir_all(&data)?;
 
     if cfg!(windows) {
+        // Check if Git needs to be installed (track whether we did it)
+        let had_git = git::find_system_git_bash().is_some();
         progress(tx, "Installing Git for Windows...");
         git::install_git(&data)?;
+        if !had_git && git::find_system_git_bash().is_some() {
+            uninstall::mark_git_installed_by_us();
+        }
 
+        // Check if Claude CLI needs to be installed (track whether we did it)
+        let had_claude = claude_cli_path().exists();
         progress(tx, "Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
+        if !had_claude && claude_cli_path().exists() {
+            uninstall::mark_claude_installed_by_us();
+        }
     } else {
         progress(tx, "Installing Claude Code CLI...");
         claude::install_claude_cli(&git_bash_path())?;
     }
 
-    // Start Menu shortcut + context menu (Windows)
+    // Start Menu shortcut + context menu + ARP registration (Windows)
     if cfg!(windows) {
         progress(tx, "Creating shortcuts...");
         if let Err(e) = shortcuts::create_start_menu_shortcut() {
@@ -111,6 +122,7 @@ pub fn run_first_time_setup_with_progress(tx: &Sender<InstallMsg>) -> Result<()>
         if let Err(e) = shortcuts::register_context_menu() {
             log::warn!("Context menu registration failed (non-fatal): {}", e);
         }
+        uninstall::register_arp();
     }
 
     // Mark as installed

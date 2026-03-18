@@ -3,6 +3,7 @@ use crate::installer;
 use crate::terminal::{PtySession, Terminal};
 use crate::ui::renderer::Renderer;
 use crate::ui::theme;
+use crate::ui::theme::Color;
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use anyhow::Result;
@@ -38,6 +39,14 @@ enum AppPhase {
     Terminal,
 }
 
+/// A single terminal tab with its own PTY + terminal emulator
+struct TabState {
+    id: usize,
+    title: String,
+    terminal: Terminal,
+    pty: Option<PtySession>,
+}
+
 struct App {
     config: Config,
     phase: AppPhase,
@@ -46,8 +55,10 @@ struct App {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
     renderer: Option<Renderer>,
-    terminal: Option<Terminal>,
-    pty: Option<PtySession>,
+    // Multi-tab terminal support
+    tabs: Vec<TabState>,
+    active_tab: usize,
+    next_tab_id: usize,
     modifiers: ModifiersState,
     width: u32,
     height: u32,
@@ -57,6 +68,7 @@ struct App {
     mouse_pressed: bool,
     selecting: bool,
     maximized: bool,
+    settings_open: bool,
     // Installer channel — receives status updates from background thread
     install_rx: Option<std::sync::mpsc::Receiver<installer::InstallMsg>>,
 }
@@ -78,8 +90,9 @@ impl App {
             window: None,
             surface: None,
             renderer: None,
-            terminal: None,
-            pty: None,
+            tabs: Vec::new(),
+            active_tab: 0,
+            next_tab_id: 0,
             modifiers: ModifiersState::empty(),
             width: INITIAL_WIDTH,
             height: INITIAL_HEIGHT,
@@ -88,6 +101,7 @@ impl App {
             mouse_pressed: false,
             selecting: false,
             maximized: false,
+            settings_open: false,
             install_rx: None,
         }
     }
@@ -110,24 +124,58 @@ impl App {
     }
 
     fn spawn_pty(&mut self) {
+        self.spawn_new_tab();
+    }
+
+    /// Spawn a new tab with its own terminal + PTY
+    fn spawn_new_tab(&mut self) {
         let git_bash = self.config.git_bash_path.clone()
             .unwrap_or_else(installer::git_bash_path);
         let claude_cli = installer::claude_cli_path();
 
-        // Get terminal grid size from renderer
         let (cols, rows) = self.renderer.as_ref()
             .map(|r| (r.cols as u16, r.rows as u16))
             .unwrap_or((120, 35));
 
-        match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
+        let terminal = Terminal::new(cols as usize, rows as usize);
+
+        let pty = match PtySession::spawn(git_bash, claude_cli, self.config.auto_accept, cols, rows) {
             Ok(session) => {
-                info!("PTY session spawned ({}x{})", cols, rows);
-                self.pty = Some(session);
+                info!("PTY session spawned for tab ({}x{})", cols, rows);
+                Some(session)
             }
             Err(e) => {
                 log::error!("Failed to spawn PTY: {}", e);
+                None
             }
+        };
+
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        self.tabs.push(TabState {
+            id,
+            title: format!("Claude {}", self.tabs.len() + 1),
+            terminal,
+            pty,
+        });
+
+        self.active_tab = self.tabs.len() - 1;
+    }
+
+    /// Close the tab at the given index. Returns true if we should close the window.
+    fn close_tab(&mut self, index: usize) -> bool {
+        if index >= self.tabs.len() {
+            return false;
         }
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            return true; // Close window
+        }
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+        false
     }
 
     fn update_title(&self) {
@@ -168,14 +216,17 @@ impl App {
     fn rebuild_renderer(&mut self) {
         let theme = self.current_theme().clone();
         let mut renderer = Renderer::new(theme, self.config.font_size);
-        renderer.resize(self.width, self.height);
+        // Account for tab bar height when tabs > 1
+        let tab_bar_offset = if self.tabs.len() > 1 { 28u32 } else { 0 };
+        renderer.resize(self.width, self.height.saturating_sub(tab_bar_offset));
         let cols = renderer.cols;
         let rows = renderer.rows;
-        if let Some(terminal) = &mut self.terminal {
-            terminal.resize(cols, rows);
-        }
-        if let Some(pty) = &self.pty {
-            pty.resize(cols as u16, rows as u16);
+        // Resize ALL tabs
+        for tab in &mut self.tabs {
+            tab.terminal.resize(cols, rows);
+            if let Some(pty) = &tab.pty {
+                pty.resize(cols as u16, rows as u16);
+            }
         }
         self.renderer = Some(renderer);
         self.request_redraw();
@@ -191,8 +242,9 @@ impl App {
     /// Convert pixel coordinates to terminal grid point
     fn pixel_to_point(&self, x: f64, y: f64) -> Option<(Point, Side)> {
         let renderer = self.renderer.as_ref()?;
+        let tab_bar_offset = if self.tabs.len() > 1 { 28.0 } else { 0.0 };
         let grid_x = renderer.grid_x() as f64;
-        let grid_y = renderer.grid_y() as f64;
+        let grid_y = renderer.grid_y() as f64 + tab_bar_offset;
 
         // Must be within the terminal grid area (inside padding)
         let term_x = x - grid_x;
@@ -268,6 +320,9 @@ impl App {
             if renderer.theme_pill.contains(x, y) {
                 return Some(TitleBarButton::ThemePill);
             }
+            if renderer.settings_pill.contains(x, y) {
+                return Some(TitleBarButton::SettingsPill);
+            }
         }
         None
     }
@@ -279,6 +334,7 @@ enum TitleBarButton {
     Maximize,
     Minimize,
     ThemePill,
+    SettingsPill,
 }
 
 impl ApplicationHandler for App {
@@ -291,7 +347,7 @@ impl ApplicationHandler for App {
             .with_inner_size(size)
             .with_min_inner_size(winit::dpi::LogicalSize::new(400u32, 300u32))
             .with_decorations(false)
-            .with_transparent(self.config.transparent);
+            .with_transparent(true);
 
         let window = Rc::new(
             event_loop.create_window(attrs).expect("Failed to create window"),
@@ -313,11 +369,9 @@ impl ApplicationHandler for App {
             .expect("Failed to resize surface");
 
         let renderer = Renderer::new(t.clone(), self.config.font_size);
-        let terminal = Terminal::new(renderer.cols, renderer.rows);
 
         self.surface = Some(surface);
         self.renderer = Some(renderer);
-        self.terminal = Some(terminal);
         self.window = Some(window);
 
         // Start the appropriate phase
@@ -357,15 +411,16 @@ impl ApplicationHandler for App {
                     );
                 }
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(self.width, self.height);
+                    let tab_bar_offset = if self.tabs.len() > 1 { 28u32 } else { 0 };
+                    renderer.resize(self.width, self.height.saturating_sub(tab_bar_offset));
                     let cols = renderer.cols;
                     let rows = renderer.rows;
-                    if let Some(terminal) = &mut self.terminal {
-                        terminal.resize(cols, rows);
-                    }
-                    // Notify PTY of new size so Claude redraws
-                    if let Some(pty) = &self.pty {
-                        pty.resize(cols as u16, rows as u16);
+                    // Resize ALL tabs
+                    for tab in &mut self.tabs {
+                        tab.terminal.resize(cols, rows);
+                        if let Some(pty) = &tab.pty {
+                            pty.resize(cols as u16, rows as u16);
+                        }
                     }
                 }
                 self.request_redraw();
@@ -383,8 +438,8 @@ impl ApplicationHandler for App {
                 // Update selection if dragging
                 if self.selecting {
                     if let Some((point, side)) = self.pixel_to_point(position.x, position.y) {
-                        if let Some(terminal) = &self.terminal {
-                            if let Ok(mut term) = terminal.term.lock() {
+                        if let Some(tab) = self.tabs.get(self.active_tab) {
+                            if let Ok(mut term) = tab.terminal.term.lock() {
                                 if let Some(ref mut sel) = term.selection {
                                     sel.update(point, side);
                                 }
@@ -451,6 +506,12 @@ impl ApplicationHandler for App {
                                     info!("Theme (pill): {}", self.config.theme_id);
                                     return;
                                 }
+                                Some(TitleBarButton::SettingsPill) => {
+                                    self.settings_open = !self.settings_open;
+                                    self.request_redraw();
+                                    info!("Settings: {}", if self.settings_open { "opened" } else { "closed" });
+                                    return;
+                                }
                                 None => {
                                     // Title bar drag — initiate window move
                                     if let Some(window) = &self.window {
@@ -459,17 +520,155 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                             }
-                        } else {
-                            // Terminal area — start text selection
-                            if let Some((point, side)) = self.pixel_to_point(self.cursor_x, self.cursor_y) {
-                            self.selecting = true;
-                            if let Some(terminal) = &self.terminal {
-                                if let Ok(mut term) = terminal.term.lock() {
-                                    let sel = Selection::new(SelectionType::Simple, point, side);
-                                    term.selection = Some(sel);
+                        } else if self.settings_open {
+                            // Settings overlay is open — handle clicks within it
+                            if let Some(renderer) = &self.renderer {
+                                let (px, py, pw, ph) = renderer.settings_panel_bounds(
+                                    self.width as usize, self.height as usize,
+                                );
+                                let mx = self.cursor_x as usize;
+                                let my = self.cursor_y as usize;
+
+                                // Close X button (top right of panel)
+                                if mx >= px + pw - 30 && mx <= px + pw - 10
+                                    && my >= py + 8 && my <= py + 30 {
+                                    self.settings_open = false;
+                                    self.request_redraw();
+                                    return;
+                                }
+
+                                // Check if click is inside panel
+                                if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+                                    let row_x = px + 20;
+                                    let value_x = px + 220;
+                                    let header_y = py + 16;
+                                    let row_spacing = renderer.cell_height + 16;
+                                    let mut row_y = header_y + renderer.cell_height + 20;
+
+                                    // Theme row
+                                    if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 && mx >= value_x {
+                                        self.config.cycle_theme();
+                                        let new_theme = self.current_theme().clone();
+                                        if let Some(r) = &mut self.renderer {
+                                            r.theme = new_theme;
+                                        }
+                                        self.update_title();
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                    row_y += row_spacing;
+
+                                    // Font size row
+                                    if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 {
+                                        // - button
+                                        if mx >= value_x && mx <= value_x + 22 {
+                                            self.config.font_size = (self.config.font_size - 1.0).max(8.0);
+                                            self.config.save();
+                                            self.rebuild_renderer();
+                                            return;
+                                        }
+                                        // + button (approximate position)
+                                        let size_str_len = format!("{:.0}pt", self.config.font_size).len();
+                                        let plus_x = value_x + 30 + size_str_len * renderer.cell_width + 8;
+                                        if mx >= plus_x && mx <= plus_x + 22 {
+                                            self.config.font_size = (self.config.font_size + 1.0).min(48.0);
+                                            self.config.save();
+                                            self.rebuild_renderer();
+                                            return;
+                                        }
+                                    }
+                                    row_y += row_spacing;
+
+                                    // Transparency row
+                                    if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 && mx >= value_x {
+                                        self.config.toggle_transparency();
+                                        self.update_title();
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                    row_y += row_spacing;
+
+                                    // Opacity row (if transparency on)
+                                    if self.config.transparent {
+                                        if my >= row_y.saturating_sub(4) && my <= row_y + renderer.cell_height + 8 {
+                                            if mx >= value_x && mx <= value_x + 22 {
+                                                self.config.adjust_opacity(-0.05);
+                                                self.update_title();
+                                                self.request_redraw();
+                                                return;
+                                            }
+                                            let opacity_str_len = format!("{:.0}%", self.config.opacity * 100.0).len();
+                                            let plus_x = value_x + 30 + opacity_str_len * renderer.cell_width + 8;
+                                            if mx >= plus_x && mx <= plus_x + 22 {
+                                                self.config.adjust_opacity(0.05);
+                                                self.update_title();
+                                                self.request_redraw();
+                                                return;
+                                            }
+                                        }
+                                        row_y += row_spacing;
+                                    }
+
+                                    // Reinstall shortcuts button
+                                    let btn_text = "Reinstall Shortcuts";
+                                    let btn_w = btn_text.len() * renderer.cell_width + 24;
+                                    let btn_h = renderer.cell_height + 12;
+                                    if mx >= row_x && mx <= row_x + btn_w
+                                        && my >= row_y && my <= row_y + btn_h {
+                                        info!("Reinstalling shortcuts...");
+                                        if let Err(e) = installer::shortcuts::create_desktop_shortcut() {
+                                            log::warn!("Desktop shortcut failed: {}", e);
+                                        }
+                                        if let Err(e) = installer::shortcuts::create_start_menu_shortcut() {
+                                            log::warn!("Start menu shortcut failed: {}", e);
+                                        }
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                } else {
+                                    // Click outside panel = close settings
+                                    self.settings_open = false;
+                                    self.request_redraw();
                                 }
                             }
-                            self.request_redraw();
+                        } else {
+                            // Check if click is on tab bar
+                            if self.tabs.len() > 1 {
+                                let tab_bar_y = TITLE_BAR_HEIGHT as usize;
+                                let tab_bar_h = 28usize;
+                                if (self.cursor_y as usize) >= tab_bar_y
+                                    && (self.cursor_y as usize) < tab_bar_y + tab_bar_h
+                                {
+                                    // Determine which tab was clicked
+                                    let tab_w = 150usize;
+                                    let mx = self.cursor_x as usize;
+                                    let tab_idx = mx / tab_w;
+                                    if tab_idx < self.tabs.len() {
+                                        // Check for close button (last 20px of tab)
+                                        let tab_end = (tab_idx + 1) * tab_w;
+                                        if mx >= tab_end.saturating_sub(24) && mx < tab_end {
+                                            if self.close_tab(tab_idx) {
+                                                event_loop.exit();
+                                            }
+                                        } else {
+                                            self.active_tab = tab_idx;
+                                        }
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                }
+                            }
+
+                            // Terminal area — start text selection
+                            if let Some((point, side)) = self.pixel_to_point(self.cursor_x, self.cursor_y) {
+                                self.selecting = true;
+                                if let Some(tab) = self.tabs.get(self.active_tab) {
+                                    if let Ok(mut term) = tab.terminal.term.lock() {
+                                        let sel = Selection::new(SelectionType::Simple, point, side);
+                                        term.selection = Some(sel);
+                                    }
+                                }
+                                self.request_redraw();
                             }
                         }
                     }
@@ -497,8 +696,8 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as i32,
                 };
 
-                if let Some(terminal) = &self.terminal {
-                    if let Ok(mut term) = terminal.term.lock() {
+                if let Some(tab) = self.tabs.get(self.active_tab) {
+                    if let Ok(mut term) = tab.terminal.term.lock() {
                         let scroll = alacritty_terminal::grid::Scroll::Delta(lines);
                         term.scroll_display(scroll);
                     }
@@ -547,24 +746,23 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Close settings on Escape
+                if self.settings_open {
+                    if matches!(&logical_key, Key::Named(NamedKey::Escape)) {
+                        self.settings_open = false;
+                        self.request_redraw();
+                        return;
+                    }
+                    // Block all other keyboard input while settings is open
+                    return;
+                }
+
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
 
                 // --- App hotkeys (Ctrl+Shift combos) ---
                 if ctrl && shift {
                     match &logical_key {
-                        // Ctrl+Shift+T — cycle theme
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("t") => {
-                            self.config.cycle_theme();
-                            let new_theme = self.current_theme().clone();
-                            if let Some(renderer) = &mut self.renderer {
-                                renderer.theme = new_theme;
-                            }
-                            self.update_title();
-                            self.request_redraw();
-                            info!("Theme: {}", self.config.theme_id);
-                            return;
-                        }
                         // Ctrl+Shift+O — toggle transparency
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("o") => {
                             self.config.toggle_transparency();
@@ -574,9 +772,8 @@ impl ApplicationHandler for App {
                         }
                         // Ctrl+Shift+C — copy selection to clipboard
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("c") => {
-                            if let Some(terminal) = &self.terminal {
-                                if let Ok(term) = terminal.term.lock() {
-                                    // Get selected text from terminal
+                            if let Some(tab) = self.tabs.get(self.active_tab) {
+                                if let Ok(term) = tab.terminal.term.lock() {
                                     let text = term.selection_to_string();
                                     if let Some(text) = text {
                                         if let Ok(mut clip) = Clipboard::new() {
@@ -592,12 +789,13 @@ impl ApplicationHandler for App {
                         Key::Character(c) if c.as_str().eq_ignore_ascii_case("v") => {
                             if let Ok(mut clip) = Clipboard::new() {
                                 if let Ok(text) = clip.get_text() {
-                                    if let Some(pty) = &self.pty {
-                                        // Bracket paste mode: wrap in escape sequences
-                                        let _ = pty.write(b"\x1b[200~");
-                                        let _ = pty.write(text.as_bytes());
-                                        let _ = pty.write(b"\x1b[201~");
-                                        info!("Pasted {} chars", text.len());
+                                    if let Some(tab) = self.tabs.get(self.active_tab) {
+                                        if let Some(pty) = &tab.pty {
+                                            let _ = pty.write(b"\x1b[200~");
+                                            let _ = pty.write(text.as_bytes());
+                                            let _ = pty.write(b"\x1b[201~");
+                                            info!("Pasted {} chars", text.len());
+                                        }
                                     }
                                 }
                             }
@@ -621,7 +819,7 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // --- Ctrl-only hotkeys (font size) ---
+                // --- Ctrl-only hotkeys (font size + tabs) ---
                 if ctrl && !shift {
                     match &logical_key {
                         // Ctrl+= — increase font size
@@ -645,12 +843,72 @@ impl ApplicationHandler for App {
                             self.rebuild_renderer();
                             return;
                         }
+                        // Ctrl+N — new tab (Windows)
+                        // On macOS, Cmd+T is handled as Super key
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("n") => {
+                            if self.phase == AppPhase::Terminal {
+                                self.spawn_new_tab();
+                                self.rebuild_renderer();
+                                info!("New tab (total: {})", self.tabs.len());
+                            }
+                            return;
+                        }
+                        // Ctrl+W — close current tab (last tab closes window)
+                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("w") => {
+                            if self.phase == AppPhase::Terminal && !self.tabs.is_empty() {
+                                let idx = self.active_tab;
+                                if self.close_tab(idx) {
+                                    event_loop.exit();
+                                } else {
+                                    self.rebuild_renderer();
+                                }
+                                self.request_redraw();
+                                info!("Closed tab (remaining: {})", self.tabs.len());
+                            }
+                            return;
+                        }
+                        // Ctrl+1-9 — jump to tab by index
+                        Key::Character(c) if c.as_str().len() == 1 => {
+                            let ch = c.as_str().bytes().next().unwrap_or(0);
+                            if ch >= b'1' && ch <= b'9' {
+                                let idx = (ch - b'1') as usize;
+                                if idx < self.tabs.len() {
+                                    self.active_tab = idx;
+                                    self.request_redraw();
+                                }
+                                return;
+                            }
+                        }
+                        // Ctrl+Tab — next tab
+                        Key::Named(NamedKey::Tab) => {
+                            if !self.tabs.is_empty() {
+                                self.active_tab = (self.active_tab + 1) % self.tabs.len();
+                                self.request_redraw();
+                            }
+                            return;
+                        }
                         _ => {}
                     }
                 }
 
+                // Ctrl+Shift+Tab — previous tab
+                if ctrl && shift {
+                    if matches!(&logical_key, Key::Named(NamedKey::Tab)) {
+                        if !self.tabs.is_empty() {
+                            self.active_tab = if self.active_tab == 0 {
+                                self.tabs.len() - 1
+                            } else {
+                                self.active_tab - 1
+                            };
+                            self.request_redraw();
+                        }
+                        return;
+                    }
+                }
+
                 // --- Terminal input passthrough ---
-                if let Some(pty) = &self.pty {
+                let active_pty = self.tabs.get(self.active_tab).and_then(|t| t.pty.as_ref());
+                if let Some(pty) = active_pty {
                     let bytes: Option<Vec<u8>> = if ctrl {
                         match &logical_key {
                             Key::Character(c) => {
@@ -769,24 +1027,94 @@ impl ApplicationHandler for App {
                         }
                     }
                     AppPhase::Terminal => {
-                        // Drain PTY output into the terminal emulator
-                        if let (Some(pty), Some(terminal)) = (&self.pty, &mut self.terminal) {
-                            while let Some(data) = pty.try_read() {
-                                terminal.process(&data);
+                        // Drain PTY output for ALL tabs (prevents memory buildup)
+                        for tab in &mut self.tabs {
+                            if let Some(pty) = &tab.pty {
+                                while let Some(data) = pty.try_read() {
+                                    tab.terminal.process(&data);
+                                }
                             }
                         }
 
-                        // Render terminal frame
-                        if let (Some(surface), Some(renderer), Some(terminal)) =
-                            (&mut self.surface, &mut self.renderer, &self.terminal)
-                        {
-                            let w = self.width as usize;
-                            let h = self.height as usize;
+                        // Render active tab's terminal frame
+                        if let Some(surface) = &mut self.surface {
+                            if let Some(renderer) = &mut self.renderer {
+                                let w = self.width as usize;
+                                let h = self.height as usize;
+                                let tab_count = self.tabs.len();
+                                let active = self.active_tab;
 
-                            if let Ok(mut buffer) = surface.buffer_mut() {
-                                let opacity = self.config.effective_opacity();
-                                renderer.render_frame(&mut buffer, w, h, opacity, terminal);
-                                let _ = buffer.present();
+                                if let Ok(mut buffer) = surface.buffer_mut() {
+                                    let opacity = self.config.effective_opacity();
+
+                                    // Render active tab's terminal
+                                    if let Some(tab) = self.tabs.get(active) {
+                                        if tab_count > 1 {
+                                            // With tab bar: render frame in offset area
+                                            let tab_bar_h = 28usize;
+                                            renderer.render_frame(&mut buffer, w, h, opacity, &tab.terminal);
+
+                                            // Render tab bar (between title bar and terminal grid)
+                                            let tab_bar_y = renderer.title_bar_height;
+                                            let tab_bar_bg = Color::rgba(
+                                                renderer.theme.title_bar_bg.r,
+                                                renderer.theme.title_bar_bg.g,
+                                                renderer.theme.title_bar_bg.b,
+                                                240,
+                                            );
+                                            Renderer::fill_rect(&mut buffer, w, 0, tab_bar_y, w, tab_bar_h, tab_bar_bg);
+
+                                            // Draw tabs
+                                            let tab_w = 150usize;
+                                            for (i, t) in self.tabs.iter().enumerate() {
+                                                let tx = i * tab_w;
+                                                let is_active = i == active;
+
+                                                // Active tab bg
+                                                if is_active {
+                                                    let active_bg = Color::rgba(
+                                                        renderer.theme.cursor.r,
+                                                        renderer.theme.cursor.g,
+                                                        renderer.theme.cursor.b,
+                                                        40,
+                                                    );
+                                                    Renderer::fill_rect(&mut buffer, w, tx, tab_bar_y, tab_w, tab_bar_h, active_bg);
+                                                    // Bottom accent line
+                                                    Renderer::fill_rect(&mut buffer, w, tx, tab_bar_y + tab_bar_h - 2, tab_w, 2, renderer.theme.cursor);
+                                                }
+
+                                                // Tab title (truncated)
+                                                let title: String = t.title.chars().take(14).collect();
+                                                let text_color = if is_active {
+                                                    renderer.theme.fg
+                                                } else {
+                                                    Color::rgba(renderer.theme.fg.r, renderer.theme.fg.g, renderer.theme.fg.b, 140)
+                                                };
+                                                renderer.render_string(&mut buffer, w, tx + 8, tab_bar_y + 6, &title, text_color);
+
+                                                // Close X button
+                                                let close_x = tx + tab_w - 20;
+                                                let close_color = Color::rgba(renderer.theme.fg.r, renderer.theme.fg.g, renderer.theme.fg.b, 100);
+                                                renderer.render_string(&mut buffer, w, close_x, tab_bar_y + 6, "x", close_color);
+
+                                                // Right separator
+                                                if i < tab_count - 1 {
+                                                    Renderer::fill_rect(&mut buffer, w, tx + tab_w - 1, tab_bar_y + 4, 1, tab_bar_h - 8, renderer.theme.window_border);
+                                                }
+                                            }
+                                        } else {
+                                            // Single tab: no tab bar, render normally
+                                            renderer.render_frame(&mut buffer, w, h, opacity, &tab.terminal);
+                                        }
+                                    }
+
+                                    // Settings overlay (on top of terminal)
+                                    if self.settings_open {
+                                        renderer.render_settings_overlay(&mut buffer, w, h, &self.config);
+                                    }
+
+                                    let _ = buffer.present();
+                                }
                             }
                         }
                     }
