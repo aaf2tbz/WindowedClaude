@@ -3,6 +3,8 @@ use crate::installer;
 use crate::terminal::{PtySession, Terminal};
 use crate::ui::renderer::Renderer;
 use crate::ui::theme;
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use anyhow::Result;
 use arboard::Clipboard;
 use log::info;
@@ -39,6 +41,7 @@ struct App {
     cursor_x: f64,
     cursor_y: f64,
     mouse_pressed: bool,
+    selecting: bool,
     maximized: bool,
 }
 
@@ -57,6 +60,7 @@ impl App {
             cursor_x: 0.0,
             cursor_y: 0.0,
             mouse_pressed: false,
+            selecting: false,
             maximized: false,
         }
     }
@@ -97,6 +101,25 @@ impl App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    /// Convert pixel coordinates to terminal grid point
+    fn pixel_to_point(&self, x: f64, y: f64) -> Option<(Point, Side)> {
+        let renderer = self.renderer.as_ref()?;
+        let term_y = y - renderer.title_bar_height as f64;
+        if term_y < 0.0 {
+            return None;
+        }
+        let col = (x / renderer.cell_width as f64) as usize;
+        let row = (term_y / renderer.cell_height as f64) as usize;
+        let col = col.min(renderer.cols.saturating_sub(1));
+        let row = row.min(renderer.rows.saturating_sub(1));
+
+        // Determine which side of the cell the click is on
+        let cell_mid = (col as f64 + 0.5) * renderer.cell_width as f64;
+        let side = if x < cell_mid { Side::Left } else { Side::Right };
+
+        Some((Point::new(Line(row as i32), Column(col)), side))
     }
 
     /// Check if a click position is within the title bar area
@@ -243,6 +266,20 @@ impl ApplicationHandler for App {
                 self.cursor_x = position.x;
                 self.cursor_y = position.y;
 
+                // Update selection if dragging
+                if self.selecting {
+                    if let Some((point, side)) = self.pixel_to_point(position.x, position.y) {
+                        if let Some(terminal) = &self.terminal {
+                            if let Ok(mut term) = terminal.term.lock() {
+                                if let Some(ref mut sel) = term.selection {
+                                    sel.update(point, side);
+                                }
+                            }
+                        }
+                        self.request_redraw();
+                    }
+                }
+
                 // Update cursor icon based on edge proximity
                 if let Some(window) = &self.window {
                     if let Some(dir) = self.resize_direction(position.x, position.y) {
@@ -297,10 +334,23 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                             }
+                        } else {
+                            // Terminal area — start text selection
+                            if let Some((point, side)) = self.pixel_to_point(self.cursor_x, self.cursor_y) {
+                            self.selecting = true;
+                            if let Some(terminal) = &self.terminal {
+                                if let Ok(mut term) = terminal.term.lock() {
+                                    let sel = Selection::new(SelectionType::Simple, point, side);
+                                    term.selection = Some(sel);
+                                }
+                            }
+                            self.request_redraw();
+                            }
                         }
                     }
                     ElementState::Released => {
                         self.mouse_pressed = false;
+                        self.selecting = false;
                     }
                 }
             }

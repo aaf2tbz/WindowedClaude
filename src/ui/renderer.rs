@@ -274,26 +274,34 @@ impl Renderer {
         let cursor_point = content.cursor.point;
         let cursor_shape = content.cursor.shape;
 
+        // Get selection range for highlight rendering
+        let selection = content.selection;
+
         // Pre-collect cell data to release the lock sooner
-        let mut cells: Vec<(usize, usize, char, TermColor, TermColor, CellFlags)> = Vec::new();
+        let mut cells: Vec<(usize, usize, char, TermColor, TermColor, CellFlags, bool)> = Vec::new();
 
         for indexed in content.display_iter {
             let col = indexed.point.column.0;
             let row = indexed.point.line.0 as usize;
             let cell = &indexed.cell;
 
+            // Check if this cell is within the selection
+            let selected = selection.as_ref().map_or(false, |sel| {
+                sel.contains(indexed.point)
+            });
+
             // Skip cells outside our grid
             if col >= self.cols || row >= self.rows {
                 continue;
             }
 
-            cells.push((col, row, cell.c, cell.fg, cell.bg, cell.flags));
+            cells.push((col, row, cell.c, cell.fg, cell.bg, cell.flags, selected));
         }
 
         drop(term); // Release the mutex before rendering
 
         // Render each cell
-        for (col, row, ch, fg_color, bg_color, flags) in &cells {
+        for (col, row, ch, fg_color, bg_color, flags, selected) in &cells {
             let px = col * self.cell_width;
             let py = self.title_bar_height + row * self.cell_height;
 
@@ -308,6 +316,13 @@ impl Renderer {
             // Handle reverse video
             let (fg, cell_bg) = if flags.contains(CellFlags::INVERSE) {
                 (cell_bg, fg)
+            } else {
+                (fg, cell_bg)
+            };
+
+            // Selection highlight: use theme selection colors
+            let (fg, cell_bg) = if *selected {
+                (self.theme.selection_fg, self.theme.selection_bg)
             } else {
                 (fg, cell_bg)
             };
