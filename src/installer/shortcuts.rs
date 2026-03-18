@@ -27,13 +27,17 @@ pub fn create_start_menu_shortcut() -> Result<()> {
     Ok(())
 }
 
-/// Create Desktop shortcuts.
-/// Windows: .lnk files. macOS/Linux: .command scripts (double-clickable).
+/// Create Desktop shortcuts inside ~/Desktop/WindowedClaude/.
+/// Windows: .lnk files. macOS: .app bundles (no Terminal.app). Linux: .desktop files.
 pub fn create_desktop_shortcut() -> Result<()> {
     let exe_path = std::env::current_exe()?;
     let exe_str = exe_path.to_string_lossy();
 
-    if let Some(dir) = dirs::desktop_dir() {
+    if let Some(desktop) = dirs::desktop_dir() {
+        // All platforms: put shortcuts in a WindowedClaude folder
+        let dir = desktop.join("WindowedClaude");
+        std::fs::create_dir_all(&dir)?;
+
         if cfg!(windows) {
             // Windows: .lnk files
             let lnk = dir.join("WindowedClaude.lnk");
@@ -48,37 +52,105 @@ pub fn create_desktop_shortcut() -> Result<()> {
                 "WindowedClaude — Auto-Accept Mode (skip permission prompts)",
             )?;
             info!("Created Desktop auto-accept shortcut: {}", auto_lnk.display());
+        } else if cfg!(target_os = "macos") {
+            // macOS: .app bundles — launches without Terminal.app
+            create_macos_app_bundle(&dir, "WindowedClaude", &exe_str, "")?;
+            create_macos_app_bundle(&dir, "WindowedClaude (Auto-Accept)", &exe_str, "--auto-accept")?;
         } else {
-            // macOS/Linux: .command scripts (double-clickable)
-            let script = dir.join("WindowedClaude.command");
-            let content = format!(
-                "#!/bin/bash\n# WindowedClaude launcher\n\"{}\" &\ndisown\n",
-                exe_str
-            );
-            std::fs::write(&script, &content)?;
-            // Make executable
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
-            }
-            info!("Created Desktop launcher: {}", script.display());
-
-            // Auto-accept variant
-            let auto_script = dir.join("WindowedClaude (Auto-Accept).command");
-            let auto_content = format!(
-                "#!/bin/bash\n# WindowedClaude Auto-Accept launcher\n\"{}\" --auto-accept &\ndisown\n",
-                exe_str
-            );
-            std::fs::write(&auto_script, &auto_content)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&auto_script, std::fs::Permissions::from_mode(0o755))?;
-            }
-            info!("Created Desktop auto-accept launcher: {}", auto_script.display());
+            // Linux: .desktop files with Terminal=false
+            create_linux_desktop_entry(&dir, "WindowedClaude", &exe_str, "")?;
+            create_linux_desktop_entry(&dir, "WindowedClaude (Auto-Accept)", &exe_str, "--auto-accept")?;
         }
     }
+    Ok(())
+}
+
+/// Create a macOS .app bundle that launches the binary without Terminal.app.
+/// Structure: Name.app/Contents/MacOS/launcher (bash script that execs the real binary)
+fn create_macos_app_bundle(
+    parent_dir: &std::path::Path,
+    name: &str,
+    exe_path: &str,
+    extra_args: &str,
+) -> Result<()> {
+    let app_dir = parent_dir.join(format!("{}.app", name));
+    let contents_dir = app_dir.join("Contents");
+    let macos_dir = contents_dir.join("MacOS");
+    std::fs::create_dir_all(&macos_dir)?;
+
+    // Info.plist — minimal, tells macOS this is a GUI app (LSUIElement hides dock icon)
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>launcher</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.windowedclaude.launcher</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>"#,
+        name = name,
+    );
+    std::fs::write(contents_dir.join("Info.plist"), plist)?;
+
+    // Launcher script — execs the real binary so no extra process lingers
+    let args_part = if extra_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", extra_args)
+    };
+    let launcher = format!(
+        "#!/bin/bash\nexec \"{}\"{}",
+        exe_path, args_part
+    );
+    let launcher_path = macos_dir.join("launcher");
+    std::fs::write(&launcher_path, launcher)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher_path, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    info!("Created macOS app bundle: {}", app_dir.display());
+    Ok(())
+}
+
+/// Create a Linux .desktop file that launches without a terminal.
+fn create_linux_desktop_entry(
+    parent_dir: &std::path::Path,
+    name: &str,
+    exe_path: &str,
+    extra_args: &str,
+) -> Result<()> {
+    let args_part = if extra_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", extra_args)
+    };
+    let desktop_entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec=\"{exe}\"{args}\nTerminal=false\nCategories=Development;\n",
+        name = name,
+        exe = exe_path,
+        args = args_part,
+    );
+    let desktop_file = parent_dir.join(format!("{}.desktop", name));
+    std::fs::write(&desktop_file, &desktop_entry)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&desktop_file, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    info!("Created Linux desktop entry: {}", desktop_file.display());
     Ok(())
 }
 
@@ -137,20 +209,32 @@ pub fn register_context_menu() -> Result<()> {
     Ok(())
 }
 
-/// Check if the Desktop shortcut exists
+/// Check if the Desktop shortcut folder exists
 pub fn has_desktop_shortcut() -> bool {
     dirs::desktop_dir()
-        .map(|d| d.join("WindowedClaude.lnk").exists())
+        .map(|d| d.join("WindowedClaude").exists())
         .unwrap_or(false)
 }
 
-/// Remove the Desktop shortcut
+/// Remove the Desktop shortcut folder and all contents
 pub fn remove_desktop_shortcut() -> Result<()> {
     if let Some(dir) = dirs::desktop_dir() {
-        let lnk = dir.join("WindowedClaude.lnk");
-        if lnk.exists() {
-            std::fs::remove_file(&lnk)?;
-            info!("Removed Desktop shortcut");
+        let folder = dir.join("WindowedClaude");
+        if folder.exists() {
+            std::fs::remove_dir_all(&folder)?;
+            info!("Removed Desktop shortcut folder");
+        }
+        // Also clean up legacy shortcuts from older versions
+        for legacy in &[
+            "WindowedClaude.lnk",
+            "WindowedClaude.command",
+            "WindowedClaude (Auto-Accept).command",
+        ] {
+            let path = dir.join(legacy);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+                info!("Removed legacy shortcut: {}", path.display());
+            }
         }
     }
     Ok(())
