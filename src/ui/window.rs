@@ -17,7 +17,7 @@ use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, Windo
 
 const INITIAL_WIDTH: u32 = 1000;
 const INITIAL_HEIGHT: u32 = 650;
-const TITLE: &str = "ClaudeTerm";
+const TITLE: &str = "WindowedClaude";
 const TITLE_BAR_HEIGHT: f64 = 36.0;
 
 /// Hit zones for title bar buttons (relative to right edge)

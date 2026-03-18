@@ -34,8 +34,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: claude-term-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/claude-term.exe
+          name: WindowedClaude-windows-x64
+          path: target/x86_64-pc-windows-msvc/release/windowed-claude.exe
 
   build-macos:
     name: macOS (universal)
@@ -68,12 +68,12 @@ jobs:
       - name: Create universal binary
         run: |
           lipo -create \
-            target/aarch64-apple-darwin/release/claude-term \
-            target/x86_64-apple-darwin/release/claude-term \
-            -output claude-term-universal
+            target/aarch64-apple-darwin/release/windowed-claude \
+            target/x86_64-apple-darwin/release/windowed-claude \
+            -output WindowedClaude
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: claude-term-macos-universal
-          path: claude-term-universal
+          name: WindowedClaude-macos-universal
+          path: WindowedClaude

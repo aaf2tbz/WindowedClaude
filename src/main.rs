@@ -8,7 +8,7 @@ use log::info;
 
 fn main() -> Result<()> {
     env_logger::init();
-    info!("ClaudeTerm starting up");
+    info!("WindowedClaude starting up");
 
     // Load persisted config (theme, opacity, font, etc.)
     let config = config::Config::load();

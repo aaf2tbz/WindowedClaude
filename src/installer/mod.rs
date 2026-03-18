@@ -5,11 +5,11 @@ use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
 
-/// Where ClaudeTerm stores its data (Git portable, config, etc.)
+/// Where WindowedClaude stores its data (Git portable, config, etc.)
 pub fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("claude-term")
+        .join("windowed-claude")
 }
 
 /// Path to the bundled/downloaded Git Bash executable (Windows only)

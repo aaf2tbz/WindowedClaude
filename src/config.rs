@@ -105,7 +105,7 @@ impl Config {
     fn config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("claude-term")
+            .join("windowed-claude")
             .join("config.json")
     }
 }

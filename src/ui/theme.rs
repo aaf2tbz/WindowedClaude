@@ -1,4 +1,4 @@
-/// ClaudeTerm theme system
+/// WindowedClaude theme system
 ///
 /// Multiple built-in themes with full ANSI 16-color palettes,
 /// transparency support, and runtime switching.

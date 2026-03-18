@@ -399,31 +399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-term"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "arboard",
- "dirs",
- "env_logger",
- "fontdue",
- "log",
- "reqwest",
- "serde",
- "serde_json",
- "softbuffer",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "windows",
- "winit",
- "winreg",
- "winresource",
- "zip",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3534,6 +3509,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "windowed-claude"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "arboard",
+ "dirs",
+ "env_logger",
+ "fontdue",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "softbuffer",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "windows",
+ "winit",
+ "winreg",
+ "winresource",
+ "zip",
 ]
 
 [[package]]

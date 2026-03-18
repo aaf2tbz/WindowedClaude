@@ -19,8 +19,8 @@ jobs:
       - run: cargo build --release --target x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v4
         with:
-          name: claude-term-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/claude-term.exe
+          name: WindowedClaude-windows-x64
+          path: target/x86_64-pc-windows-msvc/release/windowed-claude.exe
 
   build-macos:
     name: macOS
@@ -34,13 +34,13 @@ jobs:
       - run: cargo build --release --target x86_64-apple-darwin
       - run: |
           lipo -create \
-            target/aarch64-apple-darwin/release/claude-term \
-            target/x86_64-apple-darwin/release/claude-term \
-            -output claude-term-macos
+            target/aarch64-apple-darwin/release/windowed-claude \
+            target/x86_64-apple-darwin/release/windowed-claude \
+            -output WindowedClaude
       - uses: actions/upload-artifact@v4
         with:
-          name: claude-term-macos
-          path: claude-term-macos
+          name: WindowedClaude-macos
+          path: WindowedClaude
 
   release:
     name: Create Release
@@ -53,6 +53,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            claude-term-windows-x64/claude-term.exe
-            claude-term-macos/claude-term-macos
+            WindowedClaude-windows-x64/windowed-claude.exe
+            WindowedClaude-macos/WindowedClaude
           generate_release_notes: true

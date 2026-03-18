@@ -210,7 +210,7 @@ impl Renderer {
         Self::fill_rect(buf, stride, 0, 0, stride, self.title_bar_height, bg);
 
         // Title text
-        let title = format!("ClaudeTerm  —  {}", self.theme.name);
+        let title = format!("WindowedClaude  —  {}", self.theme.name);
         let text_y = (self.title_bar_height.saturating_sub(self.cell_height)) / 2;
         self.render_string(buf, stride, 14, text_y, &title, self.theme.title_bar_text);
 
