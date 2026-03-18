@@ -1011,140 +1011,60 @@ impl ApplicationHandler for App {
                 let ctrl = self.modifiers.control_key();
                 let shift = self.modifiers.shift_key();
 
-                // --- App hotkeys (Ctrl+Shift combos) ---
-                if ctrl && shift {
-                    match &logical_key {
-                        // Ctrl+Shift+O — toggle transparency
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("o") => {
-                            self.config.toggle_transparency();
-                            self.update_title();
-                            self.request_redraw();
-                            return;
-                        }
-                        // Ctrl+Shift+C — copy selection to clipboard
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("c") => {
-                            if let Some(tab) = self.tabs.get(self.active_tab) {
-                                if let Ok(term) = tab.terminal.term.lock() {
-                                    let text = term.selection_to_string();
-                                    if let Some(text) = text {
-                                        if let Ok(mut clip) = Clipboard::new() {
-                                            let _ = clip.set_text(&text);
-                                            info!("Copied {} chars", text.len());
-                                        }
-                                    }
-                                }
-                            }
-                            return;
-                        }
-                        // Ctrl+Shift+V — paste from clipboard into terminal
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("v") => {
-                            if let Ok(mut clip) = Clipboard::new() {
-                                if let Ok(text) = clip.get_text() {
-                                    if let Some(tab) = self.tabs.get(self.active_tab) {
-                                        if let Some(pty) = &tab.pty {
-                                            let _ = pty.write(b"\x1b[200~");
-                                            let _ = pty.write(text.as_bytes());
-                                            let _ = pty.write(b"\x1b[201~");
-                                            info!("Pasted {} chars", text.len());
-                                        }
-                                    }
-                                }
-                            }
-                            return;
-                        }
-                        // Ctrl+Shift+= — increase opacity
-                        Key::Character(c) if c.as_str() == "+" || c.as_str() == "=" => {
-                            self.config.adjust_opacity(0.05);
-                            self.update_title();
-                            self.request_redraw();
-                            return;
-                        }
-                        // Ctrl+Shift+- — decrease opacity
-                        Key::Character(c) if c.as_str() == "_" || c.as_str() == "-" => {
-                            self.config.adjust_opacity(-0.05);
-                            self.update_title();
-                            self.request_redraw();
-                            return;
-                        }
-                        _ => {}
+                // --- Config-driven keybind matching ---
+                // Build the key name from the pressed key
+                let key_name: Option<String> = match &logical_key {
+                    Key::Character(c) => {
+                        let s = c.as_str();
+                        // Normalize: "+" and "=" are the same physical key
+                        if s == "+" { Some("=".to_string()) }
+                        else if s == "_" { Some("-".to_string()) }
+                        else { Some(s.to_uppercase()) }
                     }
-                }
+                    Key::Named(NamedKey::Tab) => Some("Tab".to_string()),
+                    _ => None,
+                };
 
-                // --- Ctrl-only hotkeys (font size + tabs) ---
-                if ctrl && !shift {
-                    match &logical_key {
-                        // Ctrl+= — increase font size
-                        Key::Character(c) if c.as_str() == "=" || c.as_str() == "+" => {
-                            self.config.font_size = (self.config.font_size + 1.0).min(48.0);
-                            self.config.save();
+                if let Some(ref key) = key_name {
+                    use crate::config::KeyBinds;
+                    let kb = &self.config.keybinds;
+
+                    // New Tab
+                    if KeyBinds::combo_matches(kb.get("new_tab"), ctrl, shift, key) {
+                        if self.phase == AppPhase::Terminal {
+                            self.spawn_new_tab();
                             self.rebuild_renderer();
-                            return;
+                            info!("New tab (total: {})", self.tabs.len());
                         }
-                        // Ctrl+- — decrease font size
-                        Key::Character(c) if c.as_str() == "-" => {
-                            self.config.font_size = (self.config.font_size - 1.0).max(8.0);
-                            self.config.save();
-                            self.rebuild_renderer();
-                            return;
-                        }
-                        // Ctrl+0 — reset font size to default
-                        Key::Character(c) if c.as_str() == "0" => {
-                            self.config.font_size = 14.0;
-                            self.config.save();
-                            self.rebuild_renderer();
-                            return;
-                        }
-                        // Ctrl+N — new tab (Windows)
-                        // On macOS, Cmd+T is handled as Super key
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("n") => {
-                            if self.phase == AppPhase::Terminal {
-                                self.spawn_new_tab();
+                        return;
+                    }
+
+                    // Close Tab
+                    if KeyBinds::combo_matches(kb.get("close_tab"), ctrl, shift, key) {
+                        if self.phase == AppPhase::Terminal && !self.tabs.is_empty() {
+                            let idx = self.active_tab;
+                            if self.close_tab(idx) {
+                                event_loop.exit();
+                            } else {
                                 self.rebuild_renderer();
-                                info!("New tab (total: {})", self.tabs.len());
                             }
-                            return;
+                            self.request_redraw();
+                            info!("Closed tab (remaining: {})", self.tabs.len());
                         }
-                        // Ctrl+W — close current tab (last tab closes window)
-                        Key::Character(c) if c.as_str().eq_ignore_ascii_case("w") => {
-                            if self.phase == AppPhase::Terminal && !self.tabs.is_empty() {
-                                let idx = self.active_tab;
-                                if self.close_tab(idx) {
-                                    event_loop.exit();
-                                } else {
-                                    self.rebuild_renderer();
-                                }
-                                self.request_redraw();
-                                info!("Closed tab (remaining: {})", self.tabs.len());
-                            }
-                            return;
-                        }
-                        // Ctrl+1-9 — jump to tab by index
-                        Key::Character(c) if c.as_str().len() == 1 => {
-                            let ch = c.as_str().bytes().next().unwrap_or(0);
-                            if ch >= b'1' && ch <= b'9' {
-                                let idx = (ch - b'1') as usize;
-                                if idx < self.tabs.len() {
-                                    self.active_tab = idx;
-                                    self.request_redraw();
-                                }
-                                return;
-                            }
-                        }
-                        // Ctrl+Tab — next tab
-                        Key::Named(NamedKey::Tab) => {
-                            if !self.tabs.is_empty() {
-                                self.active_tab = (self.active_tab + 1) % self.tabs.len();
-                                self.request_redraw();
-                            }
-                            return;
-                        }
-                        _ => {}
+                        return;
                     }
-                }
 
-                // Ctrl+Shift+Tab — previous tab
-                if ctrl && shift {
-                    if matches!(&logical_key, Key::Named(NamedKey::Tab)) {
+                    // Next Tab
+                    if KeyBinds::combo_matches(kb.get("next_tab"), ctrl, shift, key) {
+                        if !self.tabs.is_empty() {
+                            self.active_tab = (self.active_tab + 1) % self.tabs.len();
+                            self.request_redraw();
+                        }
+                        return;
+                    }
+
+                    // Prev Tab
+                    if KeyBinds::combo_matches(kb.get("prev_tab"), ctrl, shift, key) {
                         if !self.tabs.is_empty() {
                             self.active_tab = if self.active_tab == 0 {
                                 self.tabs.len() - 1
@@ -1154,6 +1074,102 @@ impl ApplicationHandler for App {
                             self.request_redraw();
                         }
                         return;
+                    }
+
+                    // Toggle Transparency
+                    if KeyBinds::combo_matches(kb.get("toggle_transparency"), ctrl, shift, key) {
+                        self.config.toggle_transparency();
+                        self.update_title();
+                        self.request_redraw();
+                        return;
+                    }
+
+                    // Copy
+                    if KeyBinds::combo_matches(kb.get("copy"), ctrl, shift, key) {
+                        if let Some(tab) = self.tabs.get(self.active_tab) {
+                            if let Ok(term) = tab.terminal.term.lock() {
+                                let text = term.selection_to_string();
+                                if let Some(text) = text {
+                                    if let Ok(mut clip) = Clipboard::new() {
+                                        let _ = clip.set_text(&text);
+                                        info!("Copied {} chars", text.len());
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Paste
+                    if KeyBinds::combo_matches(kb.get("paste"), ctrl, shift, key) {
+                        if let Ok(mut clip) = Clipboard::new() {
+                            if let Ok(text) = clip.get_text() {
+                                if let Some(tab) = self.tabs.get(self.active_tab) {
+                                    if let Some(pty) = &tab.pty {
+                                        let _ = pty.write(b"\x1b[200~");
+                                        let _ = pty.write(text.as_bytes());
+                                        let _ = pty.write(b"\x1b[201~");
+                                        info!("Pasted {} chars", text.len());
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Increase Opacity
+                    if KeyBinds::combo_matches(kb.get("increase_opacity"), ctrl, shift, key) {
+                        self.config.adjust_opacity(0.05);
+                        self.update_title();
+                        self.request_redraw();
+                        return;
+                    }
+
+                    // Decrease Opacity
+                    if KeyBinds::combo_matches(kb.get("decrease_opacity"), ctrl, shift, key) {
+                        self.config.adjust_opacity(-0.05);
+                        self.update_title();
+                        self.request_redraw();
+                        return;
+                    }
+
+                    // Font Size +
+                    if KeyBinds::combo_matches(kb.get("increase_font"), ctrl, shift, key) {
+                        self.config.font_size = (self.config.font_size + 1.0).min(48.0);
+                        self.config.save();
+                        self.rebuild_renderer();
+                        return;
+                    }
+
+                    // Font Size -
+                    if KeyBinds::combo_matches(kb.get("decrease_font"), ctrl, shift, key) {
+                        self.config.font_size = (self.config.font_size - 1.0).max(8.0);
+                        self.config.save();
+                        self.rebuild_renderer();
+                        return;
+                    }
+
+                    // Font Reset
+                    if KeyBinds::combo_matches(kb.get("reset_font"), ctrl, shift, key) {
+                        self.config.font_size = 14.0;
+                        self.config.save();
+                        self.rebuild_renderer();
+                        return;
+                    }
+                }
+
+                // Ctrl+1-9 — jump to tab by index (always hardcoded, not rebindable)
+                if ctrl && !shift {
+                    if let Key::Character(c) = &logical_key {
+                        let ch = c.as_str().bytes().next().unwrap_or(0);
+                        if ch >= b'1' && ch <= b'9' {
+                            let idx = (ch - b'1') as usize;
+                            if idx < self.tabs.len() {
+                                self.active_tab = idx;
+                                self.request_redraw();
+                            }
+                            return;
+                        }
                     }
                 }
 
