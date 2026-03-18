@@ -403,12 +403,11 @@ impl Renderer {
         let pill_x = 14 + title.len() * self.cell_width + 16; // After title + gap
         let pill_y = (self.title_bar_height.saturating_sub(pill_h)) / 2;
 
-        // Draw pill background (accent color, semi-transparent)
-        let pill_bg = Color::rgba(
-            self.theme.cursor.r,
-            self.theme.cursor.g,
-            self.theme.cursor.b,
-            50,
+        // Draw pill background — opaque blend of cursor color against title bar bg
+        let pill_bg = Color::rgb(
+            self.theme.title_bar_bg.r.saturating_add(self.theme.cursor.r / 5),
+            self.theme.title_bar_bg.g.saturating_add(self.theme.cursor.g / 5),
+            self.theme.title_bar_bg.b.saturating_add(self.theme.cursor.b / 5),
         );
         Self::fill_rounded_rect(buf, stride, pill_x, pill_y, pill_w, pill_h, pill_h / 2, pill_bg);
 
@@ -904,8 +903,13 @@ impl Renderer {
         let theme_pill_w = self.theme.name.len() * self.cell_width + 16;
         let theme_pill_h = self.cell_height + 8;
         let theme_pill_y = row_y.saturating_sub(4);
-        let pill_alpha = if hover_row == current_row { 80u8 } else { 50u8 };
-        Self::fill_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, Color::rgba(self.theme.cursor.r, self.theme.cursor.g, self.theme.cursor.b, pill_alpha));
+        let pill_blend = if hover_row == current_row { 4u8 } else { 6u8 };
+        let theme_pill_bg = Color::rgb(
+            panel_bg.r.saturating_add(self.theme.cursor.r / pill_blend),
+            panel_bg.g.saturating_add(self.theme.cursor.g / pill_blend),
+            panel_bg.b.saturating_add(self.theme.cursor.b / pill_blend),
+        );
+        Self::fill_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, theme_pill_bg);
         Self::stroke_rounded_rect(buf, buf_width, theme_pill_x, theme_pill_y, theme_pill_w, theme_pill_h, theme_pill_h / 2, 1, self.theme.cursor);
         self.render_string(buf, buf_width, theme_pill_x + 8, row_y, self.theme.name, self.theme.cursor);
         current_row += 1;
@@ -979,7 +983,7 @@ impl Renderer {
         // Hint at bottom
         let hint = "Press Escape to close";
         let hint_y = panel_y + panel_h - self.cell_height - 12;
-        let hint_color = Color::rgba(self.theme.fg.r, self.theme.fg.g, self.theme.fg.b, 100);
+        let hint_color = Color::rgb(self.theme.fg.r / 3 + 20, self.theme.fg.g / 3 + 20, self.theme.fg.b / 3 + 20);
         self.render_string(buf, buf_width, panel_x + 20, hint_y, hint, hint_color);
     }
 
