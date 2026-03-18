@@ -52,16 +52,18 @@ impl PtySession {
             c.env("TERM", "xterm-256color");
             c
         } else {
-            // On macOS/Linux: run through bash
-            let mut c = CommandBuilder::new(&git_bash);
-            let claude_cmd = if auto_accept {
+            // On macOS/Linux: run Claude directly (no bash wrapper needed)
+            let mut c = CommandBuilder::new(&claude_exe);
+            if auto_accept {
+                c.arg("--dangerously-skip-permissions");
                 info!("Auto-accept mode enabled");
-                format!("{} --dangerously-skip-permissions", claude_exe.display())
-            } else {
-                claude_exe.display().to_string()
-            };
-            c.args(["-c", &claude_cmd]);
+            }
             c.env("TERM", "xterm-256color");
+            c.env("COLORTERM", "truecolor");
+            c.env("LANG", "en_US.UTF-8");
+            c.env("LC_ALL", "en_US.UTF-8");
+            // Ensure Claude knows it's in a real terminal
+            c.env("FORCE_COLOR", "1");
             c
         };
 
