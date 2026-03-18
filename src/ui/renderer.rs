@@ -1014,11 +1014,11 @@ impl Renderer {
             buf[i] = blend(overlay, 160, buf[i]);
         }
 
-        // Larger panel for keybinds
-        let panel_w = 520usize;
+        // Keybinds panel — wider to fit three columns comfortably
+        let panel_w = 680usize;
         let num_actions = crate::config::KEYBIND_ACTIONS.len();
-        let row_h = self.cell_height + 10;
-        let panel_h = 80 + num_actions * row_h + 60; // header + rows + buttons
+        let row_h = self.cell_height + 12;
+        let panel_h = 90 + num_actions * row_h + 80; // header + rows + buttons + hint
         let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
         let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
         let panel_r = 14usize;
@@ -1039,10 +1039,10 @@ impl Renderer {
         // Close X
         self.render_string(buf, buf_width, panel_x + panel_w - 30, panel_y + 12, "X", self.theme.fg);
 
-        // Column headers
-        let col_action = panel_x + 20;
-        let col_default = panel_x + 180;
-        let col_current = panel_x + 340;
+        // Column headers — evenly spaced across the panel width
+        let col_action = panel_x + 24;
+        let col_default = panel_x + 220;
+        let col_current = panel_x + 440;
         let header_row_y = header_y + self.cell_height + 12;
         let dim = Color::rgb(
             self.theme.fg.r / 2 + 40,
@@ -1109,15 +1109,21 @@ impl Renderer {
             }
         }
 
-        // Bottom buttons
-        let btn_y = rows_start_y + num_actions * row_h + 12;
+        // Separator before buttons
+        let btn_sep_y = rows_start_y + num_actions * row_h + 4;
+        Self::fill_rect(buf, buf_width, panel_x + 16, btn_sep_y, panel_w - 32, 1, self.theme.window_border);
+
+        // Bottom buttons — well spaced
+        let btn_y = btn_sep_y + 12;
         let btn_h = self.cell_height + 10;
         let btn_r = 5usize;
+        let btn_pad = 14; // inner text padding
+        let btn_gap = 20; // gap between buttons
 
-        // Save button
+        // Save button (green)
         let save_text = "Save";
-        let save_w = save_text.len() * self.cell_width + 20;
-        let save_x = panel_x + 20;
+        let save_w = save_text.len() * self.cell_width + btn_pad * 2;
+        let save_x = panel_x + 24;
         let save_bg = Color::rgb(
             self.theme.ansi[2].r / 3,
             self.theme.ansi[2].g / 3,
@@ -1125,20 +1131,20 @@ impl Renderer {
         );
         Self::fill_rounded_rect(buf, buf_width, save_x, btn_y, save_w, btn_h, btn_r, save_bg);
         Self::stroke_rounded_rect(buf, buf_width, save_x, btn_y, save_w, btn_h, btn_r, 1, self.theme.ansi[2]);
-        self.render_string(buf, buf_width, save_x + 10, btn_y + 5, save_text, self.theme.ansi[2]);
+        self.render_string(buf, buf_width, save_x + btn_pad, btn_y + 5, save_text, self.theme.ansi[2]);
 
-        // Discard button
+        // Discard button (neutral)
         let discard_text = "Discard";
-        let discard_w = discard_text.len() * self.cell_width + 20;
-        let discard_x = save_x + save_w + 12;
+        let discard_w = discard_text.len() * self.cell_width + btn_pad * 2;
+        let discard_x = save_x + save_w + btn_gap;
         Self::fill_rounded_rect(buf, buf_width, discard_x, btn_y, discard_w, btn_h, btn_r, self.theme.window_border);
         Self::stroke_rounded_rect(buf, buf_width, discard_x, btn_y, discard_w, btn_h, btn_r, 1, self.theme.fg);
-        self.render_string(buf, buf_width, discard_x + 10, btn_y + 5, discard_text, self.theme.fg);
+        self.render_string(buf, buf_width, discard_x + btn_pad, btn_y + 5, discard_text, self.theme.fg);
 
-        // Reset to Defaults button
-        let reset_text = "Reset to Defaults";
-        let reset_w = reset_text.len() * self.cell_width + 20;
-        let reset_x = discard_x + discard_w + 12;
+        // Reset to Defaults button (red)
+        let reset_text = "Reset Defaults";
+        let reset_w = reset_text.len() * self.cell_width + btn_pad * 2;
+        let reset_x = discard_x + discard_w + btn_gap;
         let reset_bg = Color::rgb(
             self.theme.ansi[1].r / 4,
             self.theme.ansi[1].g / 4,
@@ -1146,25 +1152,25 @@ impl Renderer {
         );
         Self::fill_rounded_rect(buf, buf_width, reset_x, btn_y, reset_w, btn_h, btn_r, reset_bg);
         Self::stroke_rounded_rect(buf, buf_width, reset_x, btn_y, reset_w, btn_h, btn_r, 1, self.theme.ansi[1]);
-        self.render_string(buf, buf_width, reset_x + 10, btn_y + 5, reset_text, self.theme.ansi[1]);
+        self.render_string(buf, buf_width, reset_x + btn_pad, btn_y + 5, reset_text, self.theme.ansi[1]);
 
-        // Hint
-        let hint = "Click a row to edit, press Escape to cancel";
-        let hint_y = panel_y + panel_h - self.cell_height - 10;
+        // Hint — below buttons with spacing
+        let hint = "Click a row to rebind  |  Escape to cancel";
+        let hint_y = btn_y + btn_h + 12;
         let hint_color = Color::rgb(
             self.theme.fg.r / 2 + 30,
             self.theme.fg.g / 2 + 30,
             self.theme.fg.b / 2 + 30,
         );
-        self.render_string(buf, buf_width, panel_x + 20, hint_y, hint, hint_color);
+        self.render_string(buf, buf_width, panel_x + 24, hint_y, hint, hint_color);
     }
 
     /// Get keybinds panel bounds for hit testing
     pub fn keybinds_panel_bounds(&self, buf_width: usize, buf_height: usize) -> (usize, usize, usize, usize) {
-        let panel_w = 520usize;
+        let panel_w = 680usize;
         let num_actions = crate::config::KEYBIND_ACTIONS.len();
-        let row_h = self.cell_height + 10;
-        let panel_h = 80 + num_actions * row_h + 60;
+        let row_h = self.cell_height + 12;
+        let panel_h = 90 + num_actions * row_h + 80;
         let panel_x = (buf_width.saturating_sub(panel_w)) / 2;
         let panel_y = (buf_height.saturating_sub(panel_h)) / 2;
         (panel_x, panel_y, panel_w, panel_h)
