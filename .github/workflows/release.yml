@@ -36,11 +36,11 @@ jobs:
           lipo -create \
             target/aarch64-apple-darwin/release/windowed-claude \
             target/x86_64-apple-darwin/release/windowed-claude \
-            -output WindowedClaude
+            -output WindowedClaude-macos
       - uses: actions/upload-artifact@v4
         with:
           name: WindowedClaude-macos
-          path: WindowedClaude
+          path: WindowedClaude-macos
 
   release:
     name: Create Release
@@ -54,5 +54,5 @@ jobs:
         with:
           files: |
             WindowedClaude-windows-x64/windowed-claude.exe
-            WindowedClaude-macos/WindowedClaude
+            WindowedClaude-macos/WindowedClaude-macos
           generate_release_notes: true

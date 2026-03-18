@@ -460,6 +460,54 @@ impl Renderer {
 
     /// Render a complete frame reading cell data from the terminal
     /// Render the welcome/shortcut prompt screen
+    /// Render the installation progress screen
+    pub fn render_install_progress(
+        &mut self,
+        buf: &mut [u32],
+        buf_width: usize,
+        buf_height: usize,
+        opacity: f32,
+        status: &str,
+    ) {
+        let bg = self.theme.bg_with_opacity(opacity);
+        buf.fill(pack_color(bg));
+
+        self.render_title_bar(buf, buf_width, opacity);
+
+        let start_y = self.title_bar_height + (buf_height.saturating_sub(self.title_bar_height)) / 3;
+
+        let lines = [
+            "  WindowedClaude",
+            "",
+            "  Setting up for first use...",
+            "",
+            &format!("  {}", status),
+            "",
+            "  This only happens once.",
+        ];
+
+        for (i, line) in lines.iter().enumerate() {
+            let y = start_y + i * self.cell_height;
+            if y + self.cell_height > buf_height {
+                break;
+            }
+            if line.is_empty() {
+                continue;
+            }
+            let color = if line.contains("WindowedClaude") {
+                self.theme.cursor
+            } else if line.contains("ERROR") {
+                self.theme.ansi[1] // Red
+            } else if *line == lines[4] {
+                self.theme.ansi[2] // Green for current status
+            } else {
+                self.theme.fg
+            };
+            self.render_string(buf, buf_width, 0, y, line, color);
+        }
+    }
+
+    /// Render the welcome/shortcut prompt screen
     pub fn render_welcome(
         &mut self,
         buf: &mut [u32],
