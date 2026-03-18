@@ -142,13 +142,19 @@ impl Renderer {
         self.title_bar_height + self.pad_top
     }
 
-    /// Get or rasterize a glyph
-    fn rasterize_glyph(&mut self, ch: char, bold: bool) {
+    /// Get or rasterize a glyph.
+    /// Returns false if the glyph is not available in the font (should be skipped).
+    fn rasterize_glyph(&mut self, ch: char, bold: bool) -> bool {
         let key = (ch, bold);
         if self.glyph_cache.contains_key(&key) {
-            return;
+            return true;
         }
         let font = if bold { &self.font_bold } else { &self.font };
+        // Skip characters not in the font — avoids ugly .notdef boxes
+        // (spinners, status icons, emoji that JetBrains Mono doesn't have)
+        if !font.has_glyph(ch) {
+            return false;
+        }
         let (metrics, bitmap) = font.rasterize(ch, self.font_size);
         self.glyph_cache.insert(key, GlyphBitmap {
             width: metrics.width,
@@ -157,6 +163,7 @@ impl Renderer {
             x_offset: metrics.xmin,
             y_offset: metrics.ymin,
         });
+        true
     }
 
     // -----------------------------------------------------------------------
@@ -513,17 +520,17 @@ impl Renderer {
         let bold = self.theme.bold_ui;
         let mut cx = x;
         for ch in text.chars() {
-            self.rasterize_glyph(ch, bold);
-            if let Some(glyph) = self.glyph_cache.get(&(ch, bold)) {
-                // Clone bitmap data to avoid borrow conflict
-                let bmp = GlyphBitmap {
-                    width: glyph.width,
-                    height: glyph.height,
-                    bitmap: glyph.bitmap.clone(),
-                    x_offset: glyph.x_offset,
-                    y_offset: glyph.y_offset,
-                };
-                Self::draw_glyph_at(buf, stride, &bmp, cx, y, self.ascent, color);
+            if self.rasterize_glyph(ch, bold) {
+                if let Some(glyph) = self.glyph_cache.get(&(ch, bold)) {
+                    let bmp = GlyphBitmap {
+                        width: glyph.width,
+                        height: glyph.height,
+                        bitmap: glyph.bitmap.clone(),
+                        x_offset: glyph.x_offset,
+                        y_offset: glyph.y_offset,
+                    };
+                    Self::draw_glyph_at(buf, stride, &bmp, cx, y, self.ascent, color);
+                }
             }
             cx += self.cell_width;
         }
@@ -763,19 +770,20 @@ impl Renderer {
                 Self::fill_rect(buf, buf_width, px, py, self.cell_width, self.cell_height, cell_bg_opacity);
             }
 
-            // Draw glyph
+            // Draw glyph (skip characters the font can't render to avoid .notdef boxes)
             if *ch != ' ' && *ch != '\0' {
                 let bold = flags.contains(CellFlags::BOLD);
-                self.rasterize_glyph(*ch, bold);
-                if let Some(glyph) = self.glyph_cache.get(&(*ch, bold)) {
-                    let bmp = GlyphBitmap {
-                        width: glyph.width,
-                        height: glyph.height,
-                        bitmap: glyph.bitmap.clone(),
-                        x_offset: glyph.x_offset,
-                        y_offset: glyph.y_offset,
-                    };
-                    Self::draw_glyph_at(buf, buf_width, &bmp, px, py, self.ascent, fg);
+                if self.rasterize_glyph(*ch, bold) {
+                    if let Some(glyph) = self.glyph_cache.get(&(*ch, bold)) {
+                        let bmp = GlyphBitmap {
+                            width: glyph.width,
+                            height: glyph.height,
+                            bitmap: glyph.bitmap.clone(),
+                            x_offset: glyph.x_offset,
+                            y_offset: glyph.y_offset,
+                        };
+                        Self::draw_glyph_at(buf, buf_width, &bmp, px, py, self.ascent, fg);
+                    }
                 }
             }
 
