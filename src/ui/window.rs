@@ -20,12 +20,15 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 /// Maximum bytes of PTY output to process per frame.
-/// Prevents huge code blocks from stalling the render loop.
-const MAX_PTY_BYTES_PER_FRAME: usize = 64 * 1024; // 64 KB
+/// 256KB keeps the channel drained during heavy agent/bash output bursts
+/// while still yielding to the render loop. On Windows ConPTY, not draining
+/// fast enough causes the internal pipe to fill and kill the child process.
+const MAX_PTY_BYTES_PER_FRAME: usize = 256 * 1024; // 256 KB
 
 /// Idle poll interval — how often we check for new PTY output when nothing is happening.
-/// 50ms = ~20 fps idle ceiling. Input events still trigger immediate redraws.
-const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// 16ms ≈ 60fps ensures ConPTY output is drained quickly during bursts.
+/// Input events still trigger immediate redraws.
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 
 const INITIAL_WIDTH: u32 = 1000;
 const INITIAL_HEIGHT: u32 = 650;

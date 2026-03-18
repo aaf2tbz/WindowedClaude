@@ -22,6 +22,20 @@ jobs:
           name: WindowedClaude-windows-x64
           path: target/x86_64-pc-windows-msvc/release/windowed-claude.exe
 
+  build-windows-arm64:
+    name: Windows ARM64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - run: cargo build --release --target aarch64-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WindowedClaude-windows-arm64
+          path: target/aarch64-pc-windows-msvc/release/windowed-claude.exe
+
   build-macos:
     name: macOS
     runs-on: macos-latest
@@ -62,24 +76,56 @@ jobs:
         run: |
           mv target/x86_64-unknown-linux-gnu/release/windowed-claude WindowedClaude
           chmod +x WindowedClaude
-          tar czf WindowedClaude-linux.tar.gz WindowedClaude
+          tar czf WindowedClaude-linux-x64.tar.gz WindowedClaude
       - uses: actions/upload-artifact@v4
         with:
-          name: WindowedClaude-linux
-          path: WindowedClaude-linux.tar.gz
+          name: WindowedClaude-linux-x64
+          path: WindowedClaude-linux-x64.tar.gz
+
+  build-linux-arm64:
+    name: Linux ARM64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libxkbcommon-dev libwayland-dev
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Package
+        run: |
+          mv target/aarch64-unknown-linux-gnu/release/windowed-claude WindowedClaude
+          tar czf WindowedClaude-linux-arm64.tar.gz WindowedClaude
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WindowedClaude-linux-arm64
+          path: WindowedClaude-linux-arm64.tar.gz
 
   release:
     name: Create Release
-    needs: [build-windows, build-macos, build-linux]
+    needs: [build-windows, build-windows-arm64, build-macos, build-linux, build-linux-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
+
+      - name: Rename Windows binaries for clarity
+        run: |
+          mv WindowedClaude-windows-x64/windowed-claude.exe WindowedClaude-windows-x64/windowed-claude-x64.exe
+          mv WindowedClaude-windows-arm64/windowed-claude.exe WindowedClaude-windows-arm64/windowed-claude-arm64.exe
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            WindowedClaude-windows-x64/windowed-claude.exe
+            WindowedClaude-windows-x64/windowed-claude-x64.exe
+            WindowedClaude-windows-arm64/windowed-claude-arm64.exe
             WindowedClaude-macos/WindowedClaude-macos.zip
-            WindowedClaude-linux/WindowedClaude-linux.tar.gz
+            WindowedClaude-linux-x64/WindowedClaude-linux-x64.tar.gz
+            WindowedClaude-linux-arm64/WindowedClaude-linux-arm64.tar.gz
           generate_release_notes: true

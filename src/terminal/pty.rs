@@ -7,6 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
+/// Reader buffer size — large enough for ConPTY to avoid backpressure.
+/// When Claude runs agents/bash, output bursts can be 100KB+. A small buffer
+/// causes ConPTY's internal pipe to fill, blocking the child process on write
+/// until the reader drains it. 64KB matches our per-frame render budget and
+/// keeps the ConPTY pipe flowing smoothly.
+const PTY_READ_BUF_SIZE: usize = 64 * 1024;
+
 /// Manages a real PTY session running Claude.
 /// Uses ConPTY on Windows, Unix PTY on macOS/Linux.
 /// This gives Claude a real terminal so its TUI renders properly.
@@ -123,10 +130,14 @@ impl PtySession {
         });
 
         // Thread: pipe PTY master → output_tx (Claude output → renderer)
+        // Uses a large buffer (64KB) to prevent ConPTY backpressure on Windows.
+        // When Claude runs agents/bash producing heavy output, a small buffer
+        // causes the ConPTY internal pipe to fill, blocking the child on write
+        // and eventually killing it when the pipe stalls.
         let reader_alive = Arc::new(AtomicBool::new(true));
         let reader_alive_clone = reader_alive.clone();
         thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            let mut buf = vec![0u8; PTY_READ_BUF_SIZE];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -135,7 +146,22 @@ impl PtySession {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        // On Windows, ConPTY can return transient errors during
+                        // heavy output. Only break on fatal pipe errors.
+                        if e.kind() == std::io::ErrorKind::BrokenPipe
+                            || e.kind() == std::io::ErrorKind::UnexpectedEof
+                        {
+                            break;
+                        }
+                        // For other errors (WouldBlock, Interrupted), retry
+                        if e.kind() == std::io::ErrorKind::Interrupted {
+                            continue;
+                        }
+                        // Unknown error — log and bail
+                        log::warn!("PTY read error: {}", e);
+                        break;
+                    }
                 }
             }
             reader_alive_clone.store(false, Ordering::Relaxed);
