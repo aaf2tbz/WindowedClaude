@@ -982,27 +982,32 @@ impl Renderer {
 // ---------------------------------------------------------------------------
 
 fn pack_color(c: Color) -> u32 {
+    // Always include alpha in high byte — required since window uses with_transparent(true)
+    let alpha = c.a as u32;
     if c.a == 255 {
-        ((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32)
+        (alpha << 24) | ((c.r as u32) << 16) | ((c.g as u32) << 8) | (c.b as u32)
     } else {
         let a = c.a as f32 / 255.0;
         let r = (c.r as f32 * a) as u32;
         let g = (c.g as f32 * a) as u32;
         let b = (c.b as f32 * a) as u32;
-        (r << 16) | (g << 8) | b
+        (alpha << 24) | (r << 16) | (g << 8) | b
     }
 }
 
 fn blend(fg: Color, alpha: u8, bg_packed: u32) -> u32 {
     let a = alpha as f32 / 255.0;
     let inv = 1.0 - a;
+    let bg_a = ((bg_packed >> 24) & 0xFF) as f32;
     let br = ((bg_packed >> 16) & 0xFF) as f32;
     let bg = ((bg_packed >> 8) & 0xFF) as f32;
     let bb = (bg_packed & 0xFF) as f32;
     let r = (fg.r as f32 * a + br * inv) as u32;
     let g = (fg.g as f32 * a + bg * inv) as u32;
     let b = (fg.b as f32 * a + bb * inv) as u32;
-    (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
+    // Preserve or boost alpha — blending over a pixel should keep it opaque
+    let out_a = (bg_a + (255.0 - bg_a) * a) as u32;
+    (out_a.min(255) << 24) | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
 }
 
 /// Convert ANSI 256-color index (16-255) to RGB
