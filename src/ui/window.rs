@@ -95,6 +95,8 @@ struct App {
     last_frame: Instant,
     /// True when there's still pending PTY output that couldn't fit in the per-frame budget
     has_pending_output: bool,
+    /// Accumulated fractional scroll pixels (trackpads send tiny deltas that round to 0)
+    scroll_pixel_acc: f64,
 }
 
 impl App {
@@ -137,6 +139,7 @@ impl App {
             install_rx: None,
             last_frame: Instant::now(),
             has_pending_output: false,
+            scroll_pixel_acc: 0.0,
         }
     }
 
@@ -921,18 +924,34 @@ impl ApplicationHandler for App {
 
             // --- Mouse: scroll wheel for terminal scrollback ---
             WindowEvent::MouseWheel { delta, .. } => {
+                let cell_h = self.renderer.as_ref().map_or(16.0, |r| r.cell_height as f64);
                 let lines = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as i32,
-                    MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as i32,
+                    MouseScrollDelta::LineDelta(_, y) => {
+                        // Discrete scroll (mouse wheel) — use directly, scale up for usability
+                        self.scroll_pixel_acc = 0.0;
+                        (y as i32) * 3
+                    }
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        // Smooth scroll (trackpad) — accumulate fractional pixels
+                        // so small deltas aren't lost by integer truncation
+                        self.scroll_pixel_acc += pos.y;
+                        let whole_lines = (self.scroll_pixel_acc / cell_h) as i32;
+                        if whole_lines != 0 {
+                            self.scroll_pixel_acc -= (whole_lines as f64) * cell_h;
+                        }
+                        whole_lines
+                    }
                 };
 
-                if let Some(tab) = self.tabs.get(self.active_tab) {
-                    if let Ok(mut term) = tab.terminal.term.lock() {
-                        let scroll = alacritty_terminal::grid::Scroll::Delta(lines);
-                        term.scroll_display(scroll);
+                if lines != 0 {
+                    if let Some(tab) = self.tabs.get(self.active_tab) {
+                        if let Ok(mut term) = tab.terminal.term.lock() {
+                            let scroll = alacritty_terminal::grid::Scroll::Delta(lines);
+                            term.scroll_display(scroll);
+                        }
                     }
+                    self.request_redraw();
                 }
-                self.request_redraw();
             }
 
             // --- Keyboard ---
@@ -1240,6 +1259,34 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // --- Shift+key terminal scrollback (intercept before passthrough) ---
+                if shift {
+                    let scroll_action = match &logical_key {
+                        Key::Named(NamedKey::PageUp) => {
+                            Some(alacritty_terminal::grid::Scroll::PageUp)
+                        }
+                        Key::Named(NamedKey::PageDown) => {
+                            Some(alacritty_terminal::grid::Scroll::PageDown)
+                        }
+                        Key::Named(NamedKey::Home) => {
+                            Some(alacritty_terminal::grid::Scroll::Top)
+                        }
+                        Key::Named(NamedKey::End) => {
+                            Some(alacritty_terminal::grid::Scroll::Bottom)
+                        }
+                        _ => None,
+                    };
+                    if let Some(scroll) = scroll_action {
+                        if let Some(tab) = self.tabs.get(self.active_tab) {
+                            if let Ok(mut term) = tab.terminal.term.lock() {
+                                term.scroll_display(scroll);
+                            }
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
                 // --- Terminal input passthrough ---
                 let active_pty = self.tabs.get(self.active_tab).and_then(|t| t.pty.as_ref());
                 if let Some(pty) = active_pty {
@@ -1288,6 +1335,14 @@ impl ApplicationHandler for App {
                     };
 
                     if let Some(data) = bytes {
+                        // Snap back to bottom when user types while scrolled up
+                        if let Some(tab) = self.tabs.get(self.active_tab) {
+                            if let Ok(mut term) = tab.terminal.term.lock() {
+                                if term.grid().display_offset() != 0 {
+                                    term.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+                                }
+                            }
+                        }
                         let _ = pty.write(&data);
                     }
                 }
