@@ -255,6 +255,88 @@ impl App {
         }
     }
 
+    /// Save the terminal scrollback as a JSON recovery file.
+    /// Called via Ctrl+J when a process crashes, so the user can feed the context
+    /// back to Claude in the next session.
+    fn save_session_dump(&self, tab_index: usize) {
+        let tab = match self.tabs.get(tab_index) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Extract all text from the terminal grid (scrollback + visible)
+        let lines: Vec<String> = if let Ok(term) = tab.terminal.term.lock() {
+            let grid = term.grid();
+            let total = grid.total_lines();
+            let cols = grid.columns();
+            let screen = grid.screen_lines();
+            let history = total.saturating_sub(screen);
+
+            let mut result = Vec::with_capacity(total);
+            // History lines (oldest first): row indices go from -(history) to -1
+            for i in (0..history).rev() {
+                let row_idx = alacritty_terminal::index::Line(-(i as i32) - 1);
+                let mut line = String::with_capacity(cols);
+                for col in 0..cols {
+                    let cell = &grid[row_idx][Column(col)];
+                    line.push(cell.c);
+                }
+                result.push(line.trim_end().to_string());
+            }
+            // Screen lines: row 0 to screen-1
+            for i in 0..screen {
+                let row_idx = alacritty_terminal::index::Line(i as i32);
+                let mut line = String::with_capacity(cols);
+                for col in 0..cols {
+                    let cell = &grid[row_idx][Column(col)];
+                    line.push(cell.c);
+                }
+                result.push(line.trim_end().to_string());
+            }
+            result
+        } else {
+            return;
+        };
+
+        // Strip trailing empty lines
+        let mut lines = lines;
+        while lines.last().map_or(false, |l| l.is_empty()) {
+            lines.pop();
+        }
+
+        // Build JSON
+        let dump = serde_json::json!({
+            "windowedclaude_session_dump": true,
+            "version": env!("CARGO_PKG_VERSION"),
+            "timestamp": chrono_timestamp(),
+            "exit_status": tab.exit_status,
+            "tab_title": tab.title,
+            "instructions": "Feed this file to Claude in your next session to restore context. Example: 'Here is the session dump from my crashed session, please continue where we left off: <paste contents>'",
+            "terminal_content": lines.join("\n"),
+        });
+
+        // Save to Desktop or home directory
+        let save_dir = dirs::desktop_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let filename = format!("windowedclaude-session-{}.json", chrono_timestamp().replace(':', "-"));
+        let path = save_dir.join(&filename);
+
+        match std::fs::write(&path, serde_json::to_string_pretty(&dump).unwrap_or_default()) {
+            Ok(()) => {
+                info!("Session dump saved to: {}", path.display());
+                // Brief visual feedback — update the exit status message
+                if let Some(tab) = self.tabs.get(tab_index) {
+                    // Can't mutate through shared ref, so log only
+                    info!("Saved {} lines to {}", lines.len(), path.display());
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to save session dump: {}", e);
+            }
+        }
+    }
+
     /// Close the tab at the given index. Returns true if we should close the window.
     fn close_tab(&mut self, index: usize) -> bool {
         if index >= self.tabs.len() {
@@ -1409,13 +1491,19 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // --- Handle dead process: Enter to respawn ---
+                // --- Handle dead process: Enter to respawn, Ctrl+J to save session ---
                 if let Some(tab) = self.tabs.get(self.active_tab) {
                     if tab.child_exited {
                         if matches!(&logical_key, Key::Named(NamedKey::Enter)) {
                             let idx = self.active_tab;
                             self.respawn_tab(idx);
                             self.request_redraw();
+                        } else if ctrl {
+                            if let Key::Character(c) = &logical_key {
+                                if c.as_str().eq_ignore_ascii_case("j") {
+                                    self.save_session_dump(self.active_tab);
+                                }
+                            }
                         }
                         return; // Don't pass input to dead PTY
                     }
@@ -1682,7 +1770,7 @@ impl ApplicationHandler for App {
                                             let bar_bg = Color::rgb(80, 20, 20);
                                             Renderer::fill_rect(&mut buffer, w, 0, bar_y, w, bar_h, bar_bg);
                                             let msg = tab.exit_status.as_deref().unwrap_or("Process exited");
-                                            let hint = format!("{} — Press Enter to respawn, Ctrl+W to close", msg);
+                                            let hint = format!("{} — Enter: respawn | Ctrl+J: save session | Ctrl+W: close", msg);
                                             let text_color = Color::rgb(255, 200, 200);
                                             renderer.render_string(&mut buffer, w, 12, bar_y + 7, &hint, text_color);
                                         }
@@ -1751,6 +1839,15 @@ impl ApplicationHandler for App {
             self.request_redraw();
         }
     }
+}
+
+/// Simple timestamp without requiring the chrono crate.
+/// Returns seconds since UNIX epoch as a string.
+fn chrono_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 pub fn run(config: Config, needs_install: bool, needs_welcome: bool) -> Result<()> {

@@ -12,9 +12,11 @@ Grab the latest from [Releases](https://github.com/aaf2tbz/WindowedClaude/releas
 
 | Platform | File | Notes |
 |----------|------|-------|
-| Windows x64 | `windowed-claude.exe` | Double-click and go |
+| Windows x64 | `windowed-claude-x64.exe` | Double-click and go |
+| Windows ARM64 | `windowed-claude-arm64.exe` | For ARM-based Windows devices |
 | macOS (Universal) | `WindowedClaude-macos.zip` | Unzip, remove quarantine (see below) |
-| Linux x64 | `WindowedClaude-linux.tar.gz` | Extract, then `./WindowedClaude` |
+| Linux x64 | `WindowedClaude-linux-x64.tar.gz` | Extract, then `./WindowedClaude` |
+| Linux ARM64 | `WindowedClaude-linux-arm64.tar.gz` | For ARM-based Linux devices |
 
 First launch auto-installs Claude CLI on all platforms (+ Git on Windows). No manual setup needed.
 
@@ -59,6 +61,12 @@ Or: System Settings > Privacy & Security > click "Allow Anyway" after the first 
 - Dedicated shortcuts: "WindowedClaude (Auto-Accept)" on Desktop + Start Menu
 - Or run: `windowed-claude --auto-accept`
 
+**Session Recovery** (after crash)
+- If Claude crashes mid-session, a red bar appears at the bottom
+- Press `Ctrl+J` to save the terminal scrollback as a JSON file to your Desktop
+- Press `Enter` to start a fresh session
+- Feed the saved JSON to Claude in the new session to restore context
+
 **Uninstall** (Windows)
 - `windowed-claude --uninstall` removes everything
 - Also in Add/Remove Programs
@@ -80,6 +88,8 @@ All shortcuts are rebindable via the Keybinds editor.
 | `Ctrl+Shift+=/-` | Adjust opacity |
 | `Ctrl+Shift+C/V` | Copy / Paste |
 | `Ctrl+=/-/0` | Font size +/-/reset |
+| `Ctrl+Shift+K` | Force kill stuck process |
+| `Ctrl+J` | Save session dump (after crash) |
 | `Escape` | Close overlay |
 
 ---
@@ -165,6 +175,26 @@ All settings can be changed via the Settings panel or Keybinds editor.
 ## Tech Stack
 
 Rust, winit, softbuffer, fontdue, alacritty_terminal, portable-pty, arboard. JetBrains Mono embedded.
+
+---
+
+## Known Issues
+
+### Windows: Claude CLI crash during heavy agent work
+
+Claude Code may crash with exit code `3221225477` (`0xC0000005` — access violation) during extended agent sessions on Windows. This is a bug in Claude CLI's Node.js runtime, not in WindowedClaude.
+
+**When this happens:**
+1. A red status bar appears at the bottom of the window
+2. Press **Ctrl+J** to save your session scrollback as a JSON recovery file (saved to Desktop)
+3. Press **Enter** to start a fresh session
+4. In the new session, paste the contents of the saved JSON file and ask Claude to continue where it left off
+
+**What's preserved:** All file changes Claude already wrote to disk are safe. Only the in-memory conversation context is lost.
+
+**Workaround:** Use `Ctrl+Shift+K` to force-kill a stuck process before it crashes, if you notice it freezing.
+
+This issue should be reported to [Claude Code](https://github.com/anthropics/claude-code/issues) with the exit code and reproduction steps.
 
 ---
 
