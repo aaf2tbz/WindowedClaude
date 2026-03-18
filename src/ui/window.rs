@@ -1138,6 +1138,7 @@ impl ApplicationHandler for App {
                         if let Ok(mut term) = tab.terminal.term.lock() {
                             let scroll = alacritty_terminal::grid::Scroll::Delta(lines);
                             term.scroll_display(scroll);
+                            clamp_scroll_to_content(&mut term);
                         }
                     }
                     self.request_redraw();
@@ -1484,6 +1485,7 @@ impl ApplicationHandler for App {
                         if let Some(tab) = self.tabs.get(self.active_tab) {
                             if let Ok(mut term) = tab.terminal.term.lock() {
                                 term.scroll_display(scroll);
+                                clamp_scroll_to_content(&mut term);
                             }
                         }
                         self.request_redraw();
@@ -1838,6 +1840,51 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next));
             self.request_redraw();
         }
+    }
+}
+
+/// Clamp the terminal's scroll offset so the user can't scroll into empty history.
+/// Claude's TUI frequently clears/redraws the screen, leaving blank lines in the
+/// scrollback buffer. Without clamping, scrolling up shows blank space instead of
+/// useful content.
+fn clamp_scroll_to_content(term: &mut alacritty_terminal::term::Term<crate::terminal::EventProxy>) {
+    let display_offset = term.grid().display_offset();
+    if display_offset == 0 {
+        return;
+    }
+
+    let grid = term.grid();
+    let total = grid.total_lines();
+    let screen = grid.screen_lines();
+    let history = total.saturating_sub(screen);
+    let cols = grid.columns();
+
+    if history == 0 {
+        return;
+    }
+
+    // Scan from the oldest history line downward to find the topmost non-empty line.
+    // History row indices: Line(-1) is most recent history, Line(-history) is oldest.
+    // We want to find the furthest back row that has content.
+    let mut max_useful_offset = 0usize;
+    // Scan efficiently: check in chunks, then narrow down
+    let check_limit = history.min(display_offset + screen); // Only check up to current scroll + one page
+    for offset in 1..=check_limit {
+        let row_idx = alacritty_terminal::index::Line(-(offset as i32));
+        let has_content = (0..cols).any(|col| {
+            let cell = &grid[row_idx][Column(col)];
+            cell.c != ' ' && cell.c != '\0'
+        });
+        if has_content {
+            max_useful_offset = offset;
+        }
+    }
+
+    // Clamp display_offset to the furthest useful line
+    if display_offset > max_useful_offset {
+        // Scroll back down to where content actually is
+        let delta = display_offset as i32 - max_useful_offset as i32;
+        term.scroll_display(alacritty_terminal::grid::Scroll::Delta(-delta));
     }
 }
 
