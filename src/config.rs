@@ -141,9 +141,23 @@ impl Config {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
+            // Restrict config directory to owner-only on Unix
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
             if let Ok(json) = serde_json::to_string_pretty(self) {
                 let tmp = parent.join(".config.json.tmp");
                 if std::fs::write(&tmp, &json).is_ok() {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(
+                            &tmp,
+                            std::fs::Permissions::from_mode(0o600),
+                        );
+                    }
                     let _ = std::fs::rename(&tmp, &path);
                 }
             }

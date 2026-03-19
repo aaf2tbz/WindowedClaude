@@ -91,6 +91,12 @@ fn progress<T: std::fmt::Display>(tx: &Sender<InstallMsg>, msg: T) {
 pub fn run_first_time_setup_with_progress(tx: &Sender<InstallMsg>) -> Result<()> {
     let data = data_dir();
     std::fs::create_dir_all(&data)?;
+    // Restrict data directory to owner-only on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700));
+    }
 
     if cfg!(windows) {
         // Check if Git needs to be installed (track whether we did it)
