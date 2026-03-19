@@ -6,6 +6,10 @@ use std::path::Path;
 const GIT_INSTALLER_URL: &str =
     "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/Git-2.47.1.2-64-bit.exe";
 
+/// Expected size of the Git installer in bytes (integrity check).
+/// Update this when bumping GIT_INSTALLER_URL to a new version.
+const GIT_INSTALLER_EXPECTED_SIZE: u64 = 69_096_664;
+
 /// Standard Git Bash install locations to check
 const GIT_BASH_PATHS: &[&str] = &[
     r"C:\Program Files\Git\bin\bash.exe",
@@ -54,6 +58,15 @@ pub fn install_git(data_dir: &Path) -> Result<()> {
 
     let bytes = response.bytes().context("Failed to read download")?;
     info!("Downloaded {} bytes", bytes.len());
+
+    // Verify download size to catch truncated or tampered downloads
+    if bytes.len() as u64 != GIT_INSTALLER_EXPECTED_SIZE {
+        anyhow::bail!(
+            "Git installer size mismatch: expected {} bytes, got {} — possible corrupted or tampered download",
+            GIT_INSTALLER_EXPECTED_SIZE,
+            bytes.len()
+        );
+    }
 
     // Save installer to temp file
     let installer_path = data_dir.join("git-installer.exe");
