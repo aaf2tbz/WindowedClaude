@@ -819,12 +819,19 @@ impl Renderer {
         // Get selection range for highlight rendering
         let selection = content.selection;
 
+        // Grab scroll position info while we still hold the lock
+        let display_offset = term.grid().display_offset();
+        let total_lines = term.grid().total_lines();
+        let screen_lines = term.grid().screen_lines();
+
         // Pre-collect cell data to release the lock sooner
         let mut cells: Vec<(usize, usize, char, TermColor, TermColor, CellFlags, bool)> = Vec::new();
 
         for indexed in content.display_iter {
             let col = indexed.point.column.0;
-            let row = indexed.point.line.0 as usize;
+            // display_iter yields negative Line indices for scrollback history;
+            // offset-correct to screen-relative row coordinates
+            let row = (indexed.point.line.0 + display_offset as i32) as usize;
             let cell = &indexed.cell;
 
             // Check if this cell is within the selection
@@ -839,11 +846,6 @@ impl Renderer {
 
             cells.push((col, row, cell.c, cell.fg, cell.bg, cell.flags, selected));
         }
-
-        // Grab scroll position info while we still hold the lock
-        let display_offset = term.grid().display_offset();
-        let total_lines = term.grid().total_lines();
-        let screen_lines = term.grid().screen_lines();
 
         drop(term); // Release the mutex before rendering
 
